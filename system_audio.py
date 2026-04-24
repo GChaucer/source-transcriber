@@ -24,7 +24,7 @@ New permissions required:
 
 Packaging changes (build_macos_app.sh / .spec):
     • Add entitlement: com.apple.security.screen-recording = True
-    • Add to Info.plist: NSScreenCaptureUsageDescription = "Interview Transcriber
+    • Add to Info.plist: NSScreenCaptureUsageDescription = "Source
       needs Screen Recording access to capture system audio during interviews."
     • codesign --entitlements entitlements.plist after PyInstaller build
 

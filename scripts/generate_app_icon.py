@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ICONSET_DIR = ROOT / "assets" / "InterviewTranscriber.iconset"
-ICNS_PATH = ROOT / "assets" / "InterviewTranscriber.icns"
+ICONSET_DIR = ROOT / "assets" / "Source.iconset"
+ICNS_PATH = ROOT / "assets" / "Source.icns"
 
 
 ICON_SIZES = [16, 32, 128, 256, 512]

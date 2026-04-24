@@ -54,7 +54,7 @@ CustomTkinter was chosen because:
 
 **Why:** Output must never depend on the shell launch directory. Source runs stay project-local for development, while packaged `.app` runs write to the user's Application Support folder because app bundles should not mutate themselves.
 
-**Implementation note:** Source mode writes to `./recordings/`. Packaged mode writes to `~/Library/Application Support/InterviewTranscriber/recordings/`.
+**Implementation note:** Source mode writes to `./recordings/`. Packaged mode writes to `~/Library/Application Support/Source/recordings/`.
 
 ---
 

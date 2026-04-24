@@ -36,7 +36,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="InterviewTranscriber",
+    name="Source",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -53,15 +53,17 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="InterviewTranscriber",
+    name="Source",
 )
 
 app = BUNDLE(
     coll,
-    name="InterviewTranscriber.app",
-    icon=str(project_dir / "assets" / "InterviewTranscriber.icns"),
-    bundle_identifier="local.interviewtranscriber",
+    name="Source.app",
+    icon=str(project_dir / "assets" / "Source.icns"),
+    bundle_identifier="com.kevinhouston.source",
     info_plist={
-        "NSMicrophoneUsageDescription": "Interview Transcriber needs microphone access to record and transcribe local audio sessions.",
+        "CFBundleDisplayName": "Source",
+        "CFBundleName": "Source",
+        "NSMicrophoneUsageDescription": "Source needs microphone access to record and transcribe local audio sessions.",
     },
 )

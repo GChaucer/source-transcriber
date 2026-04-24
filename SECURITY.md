@@ -1,13 +1,13 @@
 # Security
 
-Local Interview Transcriber is a local-first desktop app. It records audio, writes local files, and loads local Whisper models through faster-whisper.
+Source is a local-first macOS desktop app. It records audio, writes local files, and loads local Whisper models through faster-whisper.
 
 ## Security Model
 
 - No cloud transcription or app-owned network service is used during recording/transcription.
 - First model use may download model files through upstream model tooling.
 - Source runs write to the project-local data folder.
-- Packaged app runs write to `~/Library/Application Support/InterviewTranscriber/`.
+- Packaged app runs write to `~/Library/Application Support/Source/`.
 - Transcript history, open, reveal, rename, autosave, and finalization are constrained to the app recordings folder.
 - System and Mic + System modes require BlackHole or an equivalent third-party virtual audio device.
 

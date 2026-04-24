@@ -17,12 +17,12 @@ python3 -m PyInstaller \
   --noconfirm \
   --distpath "$STAGE_DIST" \
   --workpath "$STAGE_BUILD" \
-  InterviewTranscriber.spec
+  Source.spec
 
 mkdir -p "$FINAL_DIST"
-rm -rf "$FINAL_DIST/InterviewTranscriber.app" "$FINAL_DIST/InterviewTranscriber"
-ditto "$STAGE_DIST/InterviewTranscriber.app" "$FINAL_DIST/InterviewTranscriber.app"
+rm -rf "$FINAL_DIST/Source.app" "$FINAL_DIST/Source"
+ditto "$STAGE_DIST/Source.app" "$FINAL_DIST/Source.app"
 
 echo
 echo "Built app bundle:"
-echo "  $SCRIPT_DIR/dist/InterviewTranscriber.app"
+echo "  $SCRIPT_DIR/dist/Source.app"

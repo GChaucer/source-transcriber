@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interview Transcriber — UI built with CustomTkinter.
+Source — UI built with CustomTkinter.
 recorder.py and transcriber.py are untouched.
 """
 
@@ -58,7 +58,7 @@ AM = "#c4a16a"    # processing / transitional
 CY = "#81a8a1"    # saved / complete
 
 # ── Paths / config ────────────────────────────────────────────────────────────
-APP_NAME = "Interview Transcriber"
+APP_NAME = "Source"
 
 # Device name substrings that identify virtual loopback / system audio devices.
 # BlackHole is the primary target; Soundflower and Loopback are legacy fallbacks.
@@ -72,7 +72,7 @@ def _bundle_dir() -> Path:
 
 
 def _user_data_dir() -> Path:
-    return Path.home() / "Library" / "Application Support" / "InterviewTranscriber"
+    return Path.home() / "Library" / "Application Support" / "Source"
 
 
 # Source runs stay project-local; packaged app bundles write to Application Support.
@@ -273,7 +273,7 @@ class StatusPill:
 class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__(fg_color=APP_BG)
-        self.title("Interview Transcriber")
+        self.title("Source")
         self.geometry("900x720")
         self.minsize(720, 560)
 
@@ -597,7 +597,7 @@ class App(ctk.CTk):
     def _open_path(self, path: Path, reveal: bool = False) -> None:
         if not _is_recordings_path(path):
             messagebox.showerror(
-                "Interview Transcriber",
+                "Source",
                 "Refusing to open a file outside the recordings folder.",
             )
             return
@@ -606,7 +606,7 @@ class App(ctk.CTk):
             subprocess.run(cmd, check=True)
         except Exception as exc:
             messagebox.showerror(
-                "Interview Transcriber",
+                "Source",
                 "Unable to open the selected file.\n\n"
                 f"Details: {exc}",
             )
@@ -631,7 +631,7 @@ class App(ctk.CTk):
             return
         if not _is_recordings_path(target):
             messagebox.showerror(
-                "Interview Transcriber",
+                "Source",
                 "Refusing to rename a file outside the recordings folder.",
             )
             return
@@ -654,7 +654,7 @@ class App(ctk.CTk):
         sanitized = self._sanitize_transcript_name(proposed)
         if not sanitized:
             messagebox.showerror(
-                "Interview Transcriber",
+                "Source",
                 "Enter a valid transcript name.",
             )
             return
@@ -667,7 +667,7 @@ class App(ctk.CTk):
             return
         if new_md.exists() or (old_txt.exists() and new_txt.exists()):
             messagebox.showerror(
-                "Interview Transcriber",
+                "Source",
                 "A transcript with that name already exists.",
             )
             return
@@ -679,7 +679,7 @@ class App(ctk.CTk):
             self._rename_matching_sidecars(target, new_md)
         except OSError as exc:
             messagebox.showerror(
-                "Interview Transcriber",
+                "Source",
                 "Unable to rename the selected transcript.\n\n"
                 f"Details: {exc}",
             )
@@ -727,7 +727,7 @@ class App(ctk.CTk):
         self._set_idle_state()
         self._set_path()
         if dialog:
-            messagebox.showerror("Interview Transcriber", dialog)
+            messagebox.showerror("Source", dialog)
 
     def _build_header(self) -> None:
         shell = ctk.CTkFrame(self, corner_radius=0, fg_color=APP_BG, height=54)
@@ -750,7 +750,7 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(
             left,
-            text="Interview Transcriber",
+            text="Source",
             font=F(13),
             text_color=T_SEC,
             anchor="w",
@@ -1415,13 +1415,13 @@ class App(ctk.CTk):
             elif persisted:
                 self.pill.set("error", "Name unchanged")
                 messagebox.showwarning(
-                    "Interview Transcriber",
+                    "Source",
                     "Transcript content was saved, but the final filename could not be applied.",
                 )
             else:
                 self.pill.set("error", "Save failed")
                 messagebox.showerror(
-                    "Interview Transcriber",
+                    "Source",
                     "The transcript could not be fully written to disk.",
                 )
         else:

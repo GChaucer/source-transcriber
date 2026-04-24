@@ -1,6 +1,6 @@
 # Architecture
 
-Local Interview Transcriber is intentionally small. The v0.1 architecture keeps capture, transcription, and file management in separate modules without introducing a database or cloud service.
+Source is intentionally small. The v0.1 architecture keeps capture, transcription, and file management in separate modules without introducing a database or cloud service.
 
 ## Runtime Flow
 
@@ -40,7 +40,7 @@ debug.log
 Packaged `.app` runs write to:
 
 ```text
-~/Library/Application Support/InterviewTranscriber/
+~/Library/Application Support/Source/
 ```
 
 The app should never rely on the shell current working directory for runtime writes.

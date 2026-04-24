@@ -1,12 +1,12 @@
-# Local Interview Transcriber
+# Source
 
-`local-interview-transcriber` is a local-first macOS desktop wrapper for recording interview audio and producing live Markdown transcripts with `faster-whisper`.
+`source-transcriber` is a local-first macOS desktop wrapper for recording audio and producing live Markdown transcripts with `faster-whisper`.
 
 This project is the desktop app, recording workflow, and file-management wrapper. It does not invent or ship a new speech model. Transcription is powered by `faster-whisper`, which runs OpenAI Whisper model weights through CTranslate2.
 
 ## What It Does
 
-- Records local interview audio from Mic, System, or Mic + System mode.
+- Records local audio from Mic, System, or Mic + System mode.
 - Transcribes rolling chunks with a local Whisper model through `faster-whisper`.
 - Autosaves Markdown and text transcripts while recording.
 - Writes local audio sidecars for each session: mic/system source WAVs when applicable, a mixed WAV used for transcription, and session metadata JSON.
@@ -98,7 +98,7 @@ python3 -m pip install pyinstaller
 The final app bundle is written to:
 
 ```text
-dist/InterviewTranscriber.app
+dist/Source.app
 ```
 
 You can move that app into `/Applications`. The app is unsigned, so macOS may require right-click → Open on first launch.
@@ -106,7 +106,7 @@ You can move that app into `/Applications`. The app is unsigned, so macOS may re
 When run as a packaged app, writable data is stored in:
 
 ```text
-~/Library/Application Support/InterviewTranscriber/
+~/Library/Application Support/Source/
 ```
 
 That folder contains recordings, transcripts, settings, debug logs, and an optional user `glossary.txt`.
@@ -150,7 +150,7 @@ Each saved transcript uses YAML frontmatter:
 
 ```markdown
 ---
-app: "Interview Transcriber"
+app: "Source"
 created_at: "2026-04-23T16:15:44"
 input_mode: "mic_system"
 model: "small"
@@ -197,13 +197,13 @@ Sidecar files may include:
 ## Project Layout
 
 ```text
-InterviewTranscriber/
+source-transcriber/
 ├── app.py                    # CustomTkinter app and session/file workflow
 ├── recorder.py               # sounddevice capture, mixing, and WAV sidecars
 ├── transcriber.py            # faster-whisper wrapper
 ├── system_audio.py           # notes for future native ScreenCaptureKit work
 ├── scripts/generate_app_icon.py
-├── InterviewTranscriber.spec # PyInstaller config
+├── Source.spec               # PyInstaller config
 ├── build_macos_app.sh
 ├── requirements.txt
 └── README.md
