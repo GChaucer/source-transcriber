@@ -224,6 +224,18 @@ source-transcriber/
 └── README.md
 ```
 
+## Porting To Windows
+
+Source is macOS-only today. Most of the code is cross-platform (CustomTkinter, faster-whisper, CTranslate2, sounddevice all have Windows support), so a Windows port is mostly packaging and the system-audio path. Concrete touch points:
+
+- `Source.spec`: replace the macOS `BUNDLE(...)` section with a Windows `EXE(...)` target. Swap the icon from `assets/Source.icns` to a `.ico` file.
+- `build_macos_app.sh`: write a PowerShell or batch sibling that invokes PyInstaller against a `Source_windows.spec` equivalent.
+- `app.py`: the Application Support path helper returns `~/Library/Application Support/Source/` on macOS. Branch on `sys.platform` and return `%APPDATA%\Source` on Windows.
+- `app.py` and `recorder.py`: `_SYSTEM_AUDIO_KEYWORDS` targets BlackHole and similar macOS virtual devices. Windows has **native WASAPI loopback** through PortAudio's WASAPI host API, so the Windows path should prefer that over requiring a VB-Audio Cable install. If you'd rather keep the same "detect a virtual device" pattern for simplicity, VB-Audio Cable is the Windows analogue of BlackHole.
+- The BlackHole setup dialog (`_show_blackhole_setup_dialog` in `app.py`) is macOS-specific messaging. On Windows with WASAPI loopback it should not appear at all.
+
+Windows distribution runs into the same unsigned-binary friction as macOS: Defender SmartScreen will warn on first launch. Authenticode signing is optional. Test on real Windows hardware before shipping; latent assumptions in `recorder.py` about sample rates or device indexing can surface there.
+
 ## License
 
 MIT. See `LICENSE`.
