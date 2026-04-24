@@ -15,7 +15,7 @@ This project is the desktop app, recording workflow, and file-management wrapper
 
 ## Current Scope
 
-This is a focused v0.1 proof-of-work. The goal is reliable local capture, not a full meeting assistant.
+This is a focused v0.1. The goal is reliable local capture, not a full meeting assistant.
 
 Included:
 
@@ -55,6 +55,21 @@ See `SECURITY.md` for the current security posture, dependency-audit commands, a
 - PortAudio support for `sounddevice`.
 - Disk space for Whisper model files.
 - Optional: BlackHole or equivalent virtual audio device for System and Mic + System modes.
+
+## Install (Prebuilt, Apple Silicon)
+
+For Apple Silicon Macs (M1 or newer). One command in Terminal:
+
+```bash
+curl -L https://github.com/GChaucer/source-transcriber/releases/latest/download/Source.zip -o /tmp/Source.zip && \
+unzip -o /tmp/Source.zip -d /Applications && \
+xattr -dr com.apple.quarantine /Applications/Source.app && \
+open /Applications/Source.app
+```
+
+What it does: downloads the latest release zip, unpacks `Source.app` into `/Applications`, strips the macOS quarantine flag (the app is unsigned, so this skips the Gatekeeper warning), and launches it. On first launch macOS will ask for microphone permission once. The first transcription downloads the selected Whisper model (~150 MB for `small`).
+
+Intel Macs are not supported by this build. For system audio capture, install BlackHole separately.
 
 ## Install From Source
 
