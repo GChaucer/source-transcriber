@@ -1,0 +1,74 @@
+# Technical vocabulary hints for Whisper transcription.
+# One term per line. Lines starting with # are ignored.
+# Add any company names, product names, or technical terms
+# that come up in your interviews.
+
+# Auth / Identity
+OAuth
+SAML
+SSO
+JWT
+OIDC
+API key
+webhook
+
+# Cloud / Infra
+AWS
+GCP
+Azure
+S3
+EC2
+Lambda
+Kubernetes
+Docker
+Terraform
+
+# Data / ML
+SQL
+ETL
+Snowflake
+BigQuery
+Databricks
+LLM
+RAG
+embeddings
+vector database
+fine-tuning
+
+# Ad Tech / Analytics
+DSP
+SSP
+RTB
+CPM
+CPC
+ROAS
+attribution
+impression
+conversion pixel
+first-party data
+third-party data
+
+# Engineering
+REST
+GraphQL
+gRPC
+JSON
+SDK
+CI/CD
+SLA
+latency
+throughput
+rate limiting
+pagination
+
+# Common interview terms
+solutions engineer
+technical solutions
+pre-sales
+post-sales
+proof of concept
+use case
+stakeholder
+implementation
+onboarding
+escalation

@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pip-audit-cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime data and personal recordings
+recordings/
+debug.log
+settings.json
+*.log
+
+# Packaging/build artifacts
+build/
+build_*/
+dist/
+dist_*/
+.build_stage/
+.dist_stage/
+.pyinstaller/
+*.app/
+*.dmg
+*.zip
+
+# Model/cache artifacts
+models/
+.cache/
+hf_cache/
+huggingface/
+ctranslate2/
+*.bin
+*.onnx
+*.pt
+*.safetensors
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
