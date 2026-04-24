@@ -4,6 +4,10 @@
 
 This project is the desktop app, recording workflow, and file-management wrapper. It does not invent or ship a new speech model. Transcription is powered by `faster-whisper`, which runs OpenAI Whisper model weights through CTranslate2.
 
+## Screenshot
+
+![Source mid-recording with a live transcript](docs/screenshots/main-window.png)
+
 ## What It Does
 
 - Records local audio from Mic, System, or Mic + System mode.
