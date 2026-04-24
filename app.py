@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import threading
+import webbrowser
 import tkinter as tk
 import customtkinter as ctk
 from pathlib import Path
@@ -63,6 +64,11 @@ APP_NAME = "Source"
 # Device name substrings that identify virtual loopback / system audio devices.
 # BlackHole is the primary target; Soundflower and Loopback are legacy fallbacks.
 _SYSTEM_AUDIO_KEYWORDS = ("blackhole", "soundflower", "loopback")
+
+# Sentinel returned by _preflight_recording when no virtual audio device is found.
+_PREFLIGHT_NO_SYSTEM_DEVICE = "__no_system_device__"
+_BLACKHOLE_BREW_CMD = "brew install blackhole-2ch"
+_BLACKHOLE_DOWNLOAD_URL = "https://existential.audio/blackhole/"
 
 
 def _bundle_dir() -> Path:
@@ -416,16 +422,178 @@ class App(ctk.CTk):
         if self._input_mode in ("system", "mic_system"):
             result = self._find_system_audio_device()
             if result is None:
-                return (
-                    False,
-                    "System audio requires BlackHole or an equivalent virtual audio device.\n\n"
-                    "Install BlackHole, then route the interview/computer audio output to it. "
-                    "Use Mic mode if you only need the microphone.",
-                    None,
-                )
+                return False, _PREFLIGHT_NO_SYSTEM_DEVICE, None
             system_device, device_name = result
             self._log_debug(f"[app] system audio device: index={system_device} name={device_name}")
         return True, "", system_device
+
+    def _show_blackhole_setup_dialog(self) -> None:
+        """Modal dialog shown when System or Mic + System is selected and no
+        virtual audio device is present. Offers a copy-paste Homebrew command,
+        a download link, and a Recheck button that re-runs device enumeration."""
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("System audio setup")
+        dlg.configure(fg_color=APP_BG)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        try:
+            dlg.grab_set()
+        except Exception:
+            pass
+
+        pad = 20
+        frame = ctk.CTkFrame(dlg, fg_color=APP_BG)
+        frame.pack(padx=pad, pady=pad, fill="both", expand=True)
+
+        ctk.CTkLabel(
+            frame,
+            text="System audio needs a virtual audio device",
+            text_color=T_PRI,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            anchor="w",
+            justify="left",
+        ).pack(fill="x")
+
+        ctk.CTkLabel(
+            frame,
+            text=(
+                "Source captures system audio through BlackHole (or an equivalent virtual\n"
+                "input device). It isn't installed on this Mac yet. Install it, then recheck."
+            ),
+            text_color=T_SEC,
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", pady=(6, 14))
+
+        ctk.CTkLabel(
+            frame,
+            text="Install with Homebrew",
+            text_color=T_TER,
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x")
+
+        cmd_row = ctk.CTkFrame(frame, fg_color=CHROME, border_color=BORDER, border_width=1, corner_radius=6)
+        cmd_row.pack(fill="x", pady=(4, 12))
+        cmd_entry = ctk.CTkEntry(
+            cmd_row,
+            fg_color=CHROME,
+            border_width=0,
+            text_color=T_PRI,
+            font=ctk.CTkFont(family="Menlo", size=12),
+        )
+        cmd_entry.insert(0, _BLACKHOLE_BREW_CMD)
+        cmd_entry.configure(state="readonly")
+        cmd_entry.pack(side="left", fill="x", expand=True, padx=(10, 6), pady=6)
+
+        def _copy_cmd() -> None:
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(_BLACKHOLE_BREW_CMD)
+                self.update()
+                copy_btn.configure(text="Copied")
+                dlg.after(1400, lambda: copy_btn.configure(text="Copy"))
+            except Exception as exc:
+                self._log_debug(f"[app] clipboard copy failed: {exc}")
+
+        copy_btn = ctk.CTkButton(
+            cmd_row,
+            text="Copy",
+            width=64,
+            height=26,
+            fg_color=BTN_FACE,
+            hover_color=BTN_HOV,
+            text_color=T_SEC,
+            border_color=BORDER,
+            border_width=1,
+            corner_radius=4,
+            command=_copy_cmd,
+        )
+        copy_btn.pack(side="right", padx=(0, 6), pady=6)
+
+        ctk.CTkLabel(
+            frame,
+            text="Or download directly from the BlackHole project:",
+            text_color=T_TER,
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x")
+
+        link_btn = ctk.CTkButton(
+            frame,
+            text=_BLACKHOLE_DOWNLOAD_URL,
+            fg_color="transparent",
+            hover_color=CHROME,
+            text_color=T_PRI,
+            anchor="w",
+            height=24,
+            command=lambda: webbrowser.open(_BLACKHOLE_DOWNLOAD_URL),
+        )
+        link_btn.pack(fill="x", pady=(2, 14))
+
+        status_var = tk.StringVar(value="")
+        status_lbl = ctk.CTkLabel(
+            frame,
+            textvariable=status_var,
+            text_color=T_TER,
+            anchor="w",
+            justify="left",
+            font=ctk.CTkFont(size=11),
+        )
+        status_lbl.pack(fill="x")
+
+        actions = ctk.CTkFrame(frame, fg_color=APP_BG)
+        actions.pack(fill="x", pady=(10, 0))
+
+        def _recheck() -> None:
+            result = self._find_system_audio_device()
+            if result is None:
+                status_lbl.configure(text_color=T_TER)
+                status_var.set("No virtual audio device detected yet. After installing BlackHole, try again.")
+                return
+            _, device_name = result
+            status_lbl.configure(text_color=T_SEC)
+            status_var.set(f"Found: {device_name}. You can close this and start recording.")
+
+        ctk.CTkButton(
+            actions,
+            text="Cancel",
+            fg_color=BTN_FACE,
+            hover_color=BTN_HOV,
+            text_color=T_SEC,
+            border_color=BORDER,
+            border_width=1,
+            corner_radius=6,
+            width=90,
+            command=dlg.destroy,
+        ).pack(side="right", padx=(8, 0))
+
+        ctk.CTkButton(
+            actions,
+            text="Recheck",
+            fg_color=PRI_FACE,
+            hover_color=PRI_HOV,
+            text_color=PRI_TEXT,
+            corner_radius=6,
+            width=110,
+            command=_recheck,
+        ).pack(side="right")
+
+        dlg.update_idletasks()
+        try:
+            self_x = self.winfo_rootx()
+            self_y = self.winfo_rooty()
+            self_w = self.winfo_width()
+            self_h = self.winfo_height()
+            w = dlg.winfo_width()
+            h = dlg.winfo_height()
+            x = self_x + max(0, (self_w - w) // 2)
+            y = self_y + max(0, (self_h - h) // 3)
+            dlg.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
 
     def _history_files(self) -> list[Path]:
         if not RECORDINGS_DIR.exists():
@@ -1246,6 +1414,9 @@ class App(ctk.CTk):
         self._log_debug("[app] start requested")
         ok, message, system_device = self._preflight_recording()
         if not ok:
+            if message == _PREFLIGHT_NO_SYSTEM_DEVICE:
+                self._show_blackhole_setup_dialog()
+                return
             self._show_error_state("Preflight failed", message)
             self._refresh_meta()
             return
