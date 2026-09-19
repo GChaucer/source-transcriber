@@ -14,13 +14,14 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 import tkinter as tk
 import customtkinter as ctk
 from pathlib import Path
 from tkinter import messagebox, simpledialog
 
-from recorder import AudioRecorder
+from recorder import SAMPLE_RATE, AudioRecorder
 from interpret import (
     DEFAULT_MODEL as DEFAULT_OPENROUTER_MODEL,
     InterpretationError,
@@ -244,6 +245,7 @@ _PILL: dict[str, tuple[str, str, str, str, str]] = {
     "loading":    (CHROME,      BORDER,    T_TER,  T_META, "Loading"),
     "ready":      (CHROME,      BORDER,    T_TER,  T_META, "Ready"),
     "recording":  ("#162119",   "#26412f", GN,     GN,     "Recording"),
+    "audio_warning": ("#211c15", "#433724", AM, AM, "Check audio"),
     "processing": ("#211c15",   "#433724", AM,     AM,     "Processing"),
     "saved":      ("#15201f",   "#2a4441", CY,     CY,     "Saved"),
     "error":      ("#241716",   "#4a2a27", RD,     RD,     "Error"),
@@ -314,6 +316,8 @@ class App(ctk.CTk):
         self._session_meta_path: Path | None = None
         self._source_devices: dict[str, dict] = {}
         self._chunk_count = 0
+        self._system_signal_missing = False
+        self._capture_generation = 0
         self._selected_history_path: Path | None = None
         self._history_buttons: list[ctk.CTkButton] = []
         self._history_collapsed = False
@@ -1591,6 +1595,7 @@ class App(ctk.CTk):
         self.session_start = datetime.datetime.now()
         self.transcript_lines = []
         self._chunk_count = 0
+        self._system_signal_missing = False
         self._session_path = _session_file(self.session_start, "interview")
         self._audio_paths, self._session_meta_path = self._sidecar_paths_for(
             self._session_path, self._input_mode
@@ -1641,6 +1646,7 @@ class App(ctk.CTk):
             self._refresh_meta()
             return
         self._log_debug(f"[app] start succeeded: {startup}")
+        self._capture_generation += 1
         self._source_devices = startup.get("selected_input_devices", {}) if isinstance(startup, dict) else {}
         self.is_recording = True
         self._rec_btn.configure(
@@ -1652,6 +1658,8 @@ class App(ctk.CTk):
         self._save_btn.configure(state="disabled")
         self._set_recording_controls_enabled(False)
         self.pill.set("recording")
+        if self._input_mode in ("system", "mic_system"):
+            self.after(10000, self._check_system_audio, self._capture_generation)
         self._set_path()
         self._refresh_meta()
         threading.Thread(target=self._consume_chunks, daemon=True).start()
@@ -1670,6 +1678,23 @@ class App(ctk.CTk):
         )
         self.pill.set("processing")
 
+    def _set_capture_status(self, count: int) -> None:
+        if not self.is_recording:
+            return
+        if self._system_signal_missing:
+            self.pill.set("audio_warning", "System input has no signal")
+        else:
+            self.pill.set("recording", f"{count} chunk{'s' if count != 1 else ''}")
+
+    def _check_system_audio(self, generation: int) -> None:
+        if (generation != self._capture_generation or not self.is_recording
+                or self._input_mode not in ("system", "mic_system")):
+            return
+        levels = self.recorder.diagnostics_snapshot().get("source_max_level", {})
+        self._system_signal_missing = levels.get("system", 0.0) < 0.001
+        self._set_capture_status(self._chunk_count)
+        self.after(10000, self._check_system_audio, generation)
+
     def _consume_chunks(self) -> None:
         while True:
             chunk = self.chunk_queue.get()
@@ -1677,9 +1702,11 @@ class App(ctk.CTk):
                 self.after(0, self._on_done)
                 break
             try:
+                started = time.perf_counter()
                 text = self.transcriber.transcribe_chunk(
                     chunk, initial_prompt=self._glossary_prompt
                 )
+                elapsed = time.perf_counter() - started
             except Exception as exc:
                 self._log_debug(f"[app] transcription failed: {exc}")
                 if self.is_recording:
@@ -1697,10 +1724,12 @@ class App(ctk.CTk):
                     f"Details: {exc}",
                 )
                 break
+            self._log_debug(
+                f"[app] chunk processed duration={len(chunk) / SAMPLE_RATE:.1f}s "
+                f"inference={elapsed:.2f}s text_chars={len(text)} "
+                f"queued={self.chunk_queue.qsize()}"
+            )
             if text:
-                self._log_debug(
-                    f"[app] chunk transcribed len={len(text)} recorder={self.recorder.diagnostics_snapshot()}"
-                )
                 self._chunk_count += 1
                 ts = datetime.datetime.now().strftime("%H:%M:%S")
                 line = f"[{ts}] {text}"
@@ -1709,10 +1738,7 @@ class App(ctk.CTk):
                 write_ok = self._write_session()
                 n = self._chunk_count
                 if write_ok:
-                    self.after(
-                        0, self.pill.set, "recording",
-                        f"{n} chunk{'s' if n != 1 else ''}"
-                    )
+                    self.after(0, self._set_capture_status, n)
                 else:
                     if self.is_recording:
                         self.is_recording = False

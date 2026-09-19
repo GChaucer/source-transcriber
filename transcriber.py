@@ -4,6 +4,7 @@ MODEL_SIZE = "small"       # Default v0.1 balance of quality and CPU speed.
 MODEL_OPTIONS = ("small", "medium", "large-v3")
 COMPUTE_TYPE = "int8"      # Best low-risk CPU-friendly setting for local runs.
 LANGUAGE = "en"            # Skip auto-detect for faster/more stable English transcription.
+MIN_AUDIO_RMS = 0.001      # -60 dBFS: don't ask Whisper to invent speech from near-silence.
 
 
 class Transcriber:
@@ -42,6 +43,8 @@ class Transcriber:
 
     def transcribe_chunk(self, audio: np.ndarray, initial_prompt: str = "") -> str:
         if self.model is None:
+            return ""
+        if audio.size == 0 or float(np.sqrt(np.mean(np.square(audio)))) < MIN_AUDIO_RMS:
             return ""
         segments, _ = self.model.transcribe(
             audio,

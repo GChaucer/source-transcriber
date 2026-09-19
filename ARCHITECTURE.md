@@ -28,6 +28,7 @@ CustomTkinter UI
 - `app.py` owns the UI, session lifecycle, path policy, transcript history, and user-facing errors.
 - `recorder.py` owns local audio capture through `sounddevice`, startup diagnostics, source WAV files, and mixed chunks.
 - `transcriber.py` owns the `faster-whisper` model wrapper and release-safe model choices.
+- `transcriber.py` skips near-silent chunks before inference; the recorded WAV sidecars remain unchanged.
 - `interpret.py` owns the optional OpenRouter request and separate result files. It does not participate in audio capture or transcription.
 - `system_audio.py` is an architecture note for a possible future native ScreenCaptureKit implementation. It is not active runtime code.
 
@@ -56,6 +57,7 @@ The app should never rely on the shell current working directory for runtime wri
 - `mic_system`: captures default mic and virtual system audio separately, writes separate source WAVs, mixes them, and transcribes the mixed stream.
 
 System and Mic + System do not use native macOS loopback capture yet. Users must provide BlackHole or an equivalent virtual audio device.
+The UI checks the selected system input's observed signal level during recording and warns when it stays silent. Device availability alone cannot confirm that call audio is routed into BlackHole.
 
 ## Release Boundaries
 
