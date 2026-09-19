@@ -15,7 +15,8 @@ This project is the desktop app, recording workflow, and file-management wrapper
 - Autosaves Markdown and text transcripts while recording.
 - Writes local audio sidecars for each session: mic/system source WAVs when applicable, a mixed WAV used for transcription, and session metadata JSON.
 - Shows a lightweight local transcript history with Open, Reveal, and Rename actions.
-- Runs locally after model files are downloaded.
+- Optionally interprets a completed transcript through a free OpenRouter model.
+- Records and transcribes locally after model files are downloaded.
 
 ## Current Scope
 
@@ -28,13 +29,13 @@ Included:
 - Mic + System recording by capturing the microphone and BlackHole-style system audio separately, then mixing them for transcription.
 - Local transcript history and safe local file actions.
 - `small`, `medium`, and `large-v3` model choices.
+- Optional OpenRouter handoff brief for a completed transcript.
 
 Not included:
 
 - Native macOS loopback capture through ScreenCaptureKit.
 - Speaker diarization.
-- Summaries or LLM analysis.
-- Cloud sync, cloud transcription, or API-backed processing.
+- Cloud sync or cloud transcription.
 - Search, tags, databases, or project management features.
 
 ## Privacy And Consent
@@ -42,6 +43,10 @@ Not included:
 This app records audio. Make sure you have permission to record the conversation, meeting, interview, or system audio in your jurisdiction and context.
 
 By default, audio and transcripts stay on your machine. The first use of a Whisper model may require internet access to download model files. After that download, transcription can run locally.
+
+The optional **Interpret transcript** action sends the selected transcript text to OpenRouter and a model provider only after you review the preview and click **Send transcript to OpenRouter**. Audio files, device metadata, and local paths are not sent. Free providers may retain or use submitted text for training; use sample text rather than a private interview or meeting unless sharing it is appropriate. The OpenRouter API key is accepted in the dialog or through `OPENROUTER_API_KEY` and remains in process memory, not `settings.json`. Source accepts only `openrouter/free` or model IDs ending in `:free`; availability and free rate limits can change. No paid model fallback is used. Results are saved under `recordings/interpretations/`, leaving the original transcript untouched and out of transcript history.
+
+To try it from source, create an API key at [OpenRouter](https://openrouter.ai/keys), select a completed transcript, and click **Interpret transcript**. The default `openrouter/free` chooses an available free model. To compare two named free models, enter their `:free` model IDs one at a time; each run creates a separate file. The prebuilt release may predate this feature until a new release is published.
 
 See `SECURITY.md` for the current security posture, dependency-audit commands, and local data handling notes.
 

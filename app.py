@@ -7,6 +7,7 @@ recorder.py and transcriber.py are untouched.
 import datetime
 import json
 import multiprocessing
+import os
 import plistlib
 import queue
 import re
@@ -20,6 +21,13 @@ from pathlib import Path
 from tkinter import messagebox, simpledialog
 
 from recorder import AudioRecorder
+from interpret import (
+    DEFAULT_MODEL as DEFAULT_OPENROUTER_MODEL,
+    InterpretationError,
+    request_interpretation,
+    save_interpretation,
+    transcript_body,
+)
 from transcriber import COMPUTE_TYPE, LANGUAGE, MODEL_OPTIONS, Transcriber
 
 ctk.set_appearance_mode("dark")
@@ -294,6 +302,9 @@ class App(ctk.CTk):
             self.transcriber.set_model(preferred_model)
 
         self.is_recording = False
+        self._finishing = False
+        self._interpret_busy = False
+        self._openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
         self._model_loading = False
         self._input_mode: str = "mic"   # "mic" | "system" | "mic_system"
         self.transcript_lines: list[str] = []
@@ -643,10 +654,10 @@ class App(ctk.CTk):
         target = self._selected_history_path
         if not (target and target.exists()):
             return False
-        return not (self.is_recording and target == self._session_path)
+        return not ((self.is_recording or self._finishing) and target == self._session_path)
 
     def _history_state(self) -> str:
-        return "disabled" if self.is_recording else "normal"
+        return "disabled" if (self.is_recording or self._finishing) else "normal"
 
     def _set_editor_content(self, content: str, tag: str | None = None) -> None:
         self._box.configure(state="normal")
@@ -717,7 +728,7 @@ class App(ctk.CTk):
         self._update_file_action_states()
 
     def _select_history_file(self, path: Path) -> None:
-        if self.is_recording or not path.exists():
+        if self.is_recording or self._finishing or not path.exists():
             return
         if not _is_recordings_path(path):
             self._show_error_state(
@@ -746,6 +757,9 @@ class App(ctk.CTk):
         rename_state = "normal" if self._can_rename_selected() and history_state == "normal" else "disabled"
 
         self._save_btn.configure(state=reveal_state)
+        self._interpret_btn.configure(
+            state="normal" if target and history_state == "normal" and not self._interpret_busy else "disabled"
+        )
         if not self._history_collapsed:
             self._open_btn.configure(state=history_state if self._selected_history_path else "disabled")
             self._reveal_btn.configure(state=history_state if self._selected_history_path else "disabled")
@@ -878,6 +892,7 @@ class App(ctk.CTk):
 
     def _set_idle_state(self) -> None:
         self.is_recording = False
+        self._finishing = False
         self._rec_btn.configure(
             state="normal",
             text="▶   Start Recording",
@@ -1309,6 +1324,22 @@ class App(ctk.CTk):
         )
         self._rename_btn.pack(side="left", padx=(8, 0))
 
+        self._interpret_btn = ctk.CTkButton(
+            self._history_body,
+            text="Interpret transcript",
+            font=F(11, "bold"),
+            fg_color=BTN_FACE,
+            hover_color=BTN_HOV,
+            text_color=T_SEC,
+            border_width=1,
+            border_color=BORDER_HI,
+            corner_radius=9,
+            height=34,
+            command=self.open_interpret_dialog,
+            state="disabled",
+        )
+        self._interpret_btn.pack(fill="x", padx=14, pady=(0, 10))
+
         self._history_list = ctk.CTkScrollableFrame(
             self._history_body,
             fg_color="transparent",
@@ -1324,6 +1355,140 @@ class App(ctk.CTk):
             "Autosaves stay inside this project in recordings/.",
             "ph",
         )
+
+    def open_interpret_dialog(self) -> None:
+        source_path = self._selected_file_for_actions()
+        if self.is_recording or self._finishing or self._interpret_busy or not source_path:
+            return
+        if not _is_recordings_path(source_path):
+            messagebox.showerror("Source", "The selected transcript is outside the recordings folder.")
+            return
+        try:
+            source_content = source_path.read_text(encoding="utf-8")
+            body = transcript_body(source_content)
+        except (OSError, UnicodeError, InterpretationError) as exc:
+            messagebox.showerror("Source", f"Unable to open the transcript.\n\n{exc}")
+            return
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Interpret transcript · OpenRouter")
+        dialog.geometry("700x610")
+        dialog.minsize(560, 490)
+        dialog.configure(fg_color=APP_BG)
+        dialog.transient(self)
+
+        frame = ctk.CTkFrame(dialog, fg_color=APP_BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=18)
+        ctk.CTkLabel(
+            frame, text="Interpret transcript", font=F(19, "bold"),
+            text_color=T_PRI, anchor="w",
+        ).pack(fill="x")
+        ctk.CTkLabel(
+            frame, text=source_path.name, font=FM(11), text_color=T_META, anchor="w",
+        ).pack(fill="x", pady=(4, 12))
+        ctk.CTkLabel(
+            frame,
+            text=("Only the transcript text shown below is sent when you click Send. "
+                  "Free providers may retain or train on submitted text. Use a sample "
+                  "for interviews or other private conversations."),
+            font=F(11), text_color=T_SEC, wraplength=650, justify="left", anchor="w",
+        ).pack(fill="x", pady=(0, 14))
+
+        ctk.CTkLabel(frame, text="OpenRouter model", font=F(11), text_color=T_META,
+                     anchor="w").pack(fill="x")
+        model_entry = ctk.CTkEntry(
+            frame, font=FM(12), fg_color=EDITOR_BG, text_color=T_PRI,
+            border_color=BORDER_HI, height=36,
+        )
+        model_entry.insert(0, self._settings.get("openrouter_model", DEFAULT_OPENROUTER_MODEL))
+        model_entry.pack(fill="x", pady=(4, 10))
+        ctk.CTkLabel(frame, text="OpenRouter API key (kept in memory for this run)",
+                     font=F(11), text_color=T_META, anchor="w").pack(fill="x")
+        key_entry = ctk.CTkEntry(
+            frame, show="•", font=FM(12), fg_color=EDITOR_BG, text_color=T_PRI,
+            border_color=BORDER_HI, height=36,
+        )
+        key_entry.insert(0, self._openrouter_key)
+        key_entry.pack(fill="x", pady=(4, 12))
+
+        status = tk.StringVar(value=f"Preview · {len(body):,} characters · free models only")
+        ctk.CTkLabel(frame, textvariable=status, font=F(11), text_color=T_META,
+                     anchor="w").pack(fill="x", pady=(0, 5))
+        preview = ctk.CTkTextbox(
+            frame, font=FM(11), fg_color=EDITOR_BG, text_color=T_PRI,
+            border_width=1, border_color=BORDER, wrap="word",
+        )
+        preview.insert("1.0", body)
+        preview.configure(state="disabled")
+        preview.pack(fill="both", expand=True, pady=(0, 12))
+
+        buttons = ctk.CTkFrame(frame, fg_color="transparent")
+        buttons.pack(fill="x")
+        send_button = ctk.CTkButton(
+            buttons, text="Send transcript to OpenRouter", font=F(12, "bold"),
+            fg_color=PRI_FACE, hover_color=PRI_HOV, text_color=PRI_TEXT,
+            width=220, command=lambda: send(),
+        )
+        send_button.pack(side="left")
+        ctk.CTkButton(
+            buttons, text="Close", font=F(12), fg_color=BTN_FACE,
+            hover_color=BTN_HOV, text_color=T_SEC, width=90,
+            command=dialog.destroy,
+        ).pack(side="right")
+
+        def finish(result=None, output_path=None, error=None):
+            self._interpret_busy = False
+            self._update_file_action_states()
+            if not dialog.winfo_exists():
+                return
+            send_button.configure(state="normal")
+            if error:
+                status.set(error)
+                return
+            preview.configure(state="normal")
+            preview.delete("1.0", "end")
+            preview.insert("1.0", result.text)
+            preview.configure(state="disabled")
+            status.set(f"Saved to recordings/interpretations/{output_path.name}")
+
+        def send():
+            model = model_entry.get().strip()
+            key = key_entry.get().strip()
+            if model != "openrouter/free" and not model.endswith(":free"):
+                status.set("Free models only: use openrouter/free or a model ending in :free.")
+                return
+            if not key:
+                status.set("Enter an OpenRouter API key.")
+                return
+            try:
+                if source_path.read_text(encoding="utf-8") != source_content:
+                    status.set("Transcript changed since preview. Close and reopen it before sending.")
+                    return
+            except (OSError, UnicodeError):
+                status.set("Transcript is no longer available. Close and reopen it.")
+                return
+            self._openrouter_key = key
+            self._settings["openrouter_model"] = model
+            self._save_settings()
+            self._interpret_busy = True
+            self._update_file_action_states()
+            send_button.configure(state="disabled")
+            status.set("Waiting for OpenRouter…")
+
+            def work():
+                try:
+                    result = request_interpretation(body, model, key)
+                    output_path = save_interpretation(
+                        source_path, source_content, result, RECORDINGS_DIR
+                    )
+                except InterpretationError as exc:
+                    self.after(0, finish, None, None, str(exc))
+                except OSError:
+                    self.after(0, finish, None, None, "Interpretation returned, but saving failed.")
+                else:
+                    self.after(0, finish, result, output_path, None)
+
+            threading.Thread(target=work, daemon=True).start()
 
     # ── Model loading ─────────────────────────────────────────────────────────
 
@@ -1411,6 +1576,8 @@ class App(ctk.CTk):
             self._stop()
 
     def _start(self) -> None:
+        if self._finishing:
+            return
         self._log_debug("[app] start requested")
         ok, message, system_device = self._preflight_recording()
         if not ok:
@@ -1493,6 +1660,7 @@ class App(ctk.CTk):
     def _stop(self) -> None:
         self._log_debug(f"[app] stop requested recorder={self.recorder.diagnostics_snapshot()}")
         self.is_recording = False
+        self._finishing = True
         self.recorder.stop()
         self._rec_btn.configure(
             state="disabled",

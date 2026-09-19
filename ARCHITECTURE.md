@@ -18,6 +18,9 @@ CustomTkinter UI
        -> Markdown
        -> text copy
        -> session JSON
+  -> optional completed-transcript interpretation
+       -> interpret.py / OpenRouter free model
+       -> recordings/interpretations/*.md
 ```
 
 ## Main Modules
@@ -25,6 +28,7 @@ CustomTkinter UI
 - `app.py` owns the UI, session lifecycle, path policy, transcript history, and user-facing errors.
 - `recorder.py` owns local audio capture through `sounddevice`, startup diagnostics, source WAV files, and mixed chunks.
 - `transcriber.py` owns the `faster-whisper` model wrapper and release-safe model choices.
+- `interpret.py` owns the optional OpenRouter request and separate result files. It does not participate in audio capture or transcription.
 - `system_audio.py` is an architecture note for a possible future native ScreenCaptureKit implementation. It is not active runtime code.
 
 ## Data Locations
@@ -55,4 +59,4 @@ System and Mic + System do not use native macOS loopback capture yet. Users must
 
 ## Release Boundaries
 
-v0.1 intentionally excludes diarization, summaries, cloud sync, native ScreenCaptureKit capture, and advanced model tuning. Those can be considered later only after the local capture path is boringly reliable.
+The optional interpretation action is isolated from recording and requires an explicit send. Diarization, cloud sync, native ScreenCaptureKit capture, and advanced model tuning remain outside the current scope.
