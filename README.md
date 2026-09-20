@@ -4,9 +4,15 @@
 
 This project is the desktop app, recording workflow, and file-management wrapper. It does not invent or ship a new speech model. Transcription is powered by `faster-whisper`, which runs OpenAI Whisper model weights through CTranslate2.
 
-## Screenshot
+## New: optional OpenRouter summaries
 
-![Source mid-recording with a live transcript](docs/screenshots/main-window.png)
+A simpler workspace now keeps original transcripts and optional free-model summaries together. OpenRouter setup lives in **Settings**; recording still works without an API key.
+
+![Updated Source transcript view using synthetic content](docs/screenshots/source-transcript.jpg)
+
+[See the visual update, setup screenshots, and architecture diagram](docs/updates/openrouter.md).
+
+See [Source v0.3](https://github.com/GChaucer/source-transcriber/releases/tag/v0.3) for the macOS download and release notes.
 
 ## What It Does
 
@@ -14,8 +20,9 @@ This project is the desktop app, recording workflow, and file-management wrapper
 - Transcribes rolling chunks with a local Whisper model through `faster-whisper`.
 - Autosaves Markdown and text transcripts while recording.
 - Writes local audio sidecars for each session: mic/system source WAVs when applicable, a mixed WAV used for transcription, and session metadata JSON.
-- Shows a lightweight local transcript history with Open, Reveal, and Rename actions.
-- Runs locally after model files are downloaded.
+- Shows readable recording history with Transcript / Summary tabs, Copy text, Rename, and Show in Finder.
+- Optionally interprets a completed transcript through a free OpenRouter model.
+- Records and transcribes locally after model files are downloaded.
 
 ## Current Scope
 
@@ -28,13 +35,13 @@ Included:
 - Mic + System recording by capturing the microphone and BlackHole-style system audio separately, then mixing them for transcription.
 - Local transcript history and safe local file actions.
 - `small`, `medium`, and `large-v3` model choices.
+- Optional OpenRouter handoff brief for a completed transcript.
 
 Not included:
 
 - Native macOS loopback capture through ScreenCaptureKit.
 - Speaker diarization.
-- Summaries or LLM analysis.
-- Cloud sync, cloud transcription, or API-backed processing.
+- Cloud sync or cloud transcription.
 - Search, tags, databases, or project management features.
 
 ## Privacy And Consent
@@ -42,6 +49,12 @@ Not included:
 This app records audio. Make sure you have permission to record the conversation, meeting, interview, or system audio in your jurisdiction and context.
 
 By default, audio and transcripts stay on your machine. The first use of a Whisper model may require internet access to download model files. After that download, transcription can run locally.
+
+The optional **Summarize with OpenRouter** action sends only the selected transcript body after you review a preview and choose **Send transcript to OpenRouter**. Audio files and local metadata stay on your Mac. Free providers may retain or train on submitted text, so use a sample for a demo or private conversation. Source uses only `openrouter/free`, with no custom router or paid-model fallback. Availability and free rate limits can change.
+
+Click **Settings** in the main toolbar and use its **OpenRouter** section to add a key, then **Use key this session**. A key is optional for local recording and stays in memory until you quit; it is never saved in `settings.json`. You can also supply `OPENROUTER_API_KEY`. Select a recording and choose **Summarize with OpenRouter**. Its saved result appears in the **Summary** tab and remains associated by transcript content if you rename the recording. The **Transcript** tab always shows the original text. Results are saved separately under `recordings/interpretations/`.
+
+The sidebar lists recordings by readable title and date. Select one to open it. **Settings** contains local model size and update interval; audio input remains beside the recording button. During capture, the status shows elapsed time and whether each selected input has a signal. **Copy text** copies the current tab, and **Show in Finder** reveals the original recording file.
 
 See `SECURITY.md` for the current security posture, dependency-audit commands, and local data handling notes.
 
@@ -139,6 +152,7 @@ That folder contains recordings, transcripts, settings, debug logs, and an optio
 | Mic + System | Intended interview mode | Captures default mic plus BlackHole-style system audio, writes separate source WAVs, and transcribes the mixed WAV stream. |
 
 System audio currently requires manual macOS routing. Install BlackHole, then route the app/browser/interview audio output to BlackHole in System Settings or your audio routing tool. If no virtual system device is available, the app should fail before recording starts and show a clear message.
+If the selected system input remains silent for 10 seconds, Source shows **Check audio** while recording. This is a signal warning, not a claim that the call itself is silent; check your Mac output routing before relying on a Mic + System recording.
 
 ## Usage
 
@@ -154,6 +168,8 @@ Current transcription defaults:
 - Compute type: `int8`
 - Language: `en`
 - Default chunk length: `8s`
+
+Source skips chunks only when every 20 ms audio frame is below -60 dBFS before running Whisper. Short utterances are not averaged together with surrounding silence. Very faint speech can still fall below this threshold; the original WAV audio is retained. This avoids spending CPU time on near-silence and reduces repeated filler hallucinations. It does not remove real speech from the saved audio sidecars.
 
 Model tradeoffs:
 
@@ -205,9 +221,9 @@ Sidecar files may include:
 
 **No microphone prompt appears**: Check System Settings → Privacy & Security → Microphone. Packaged apps and Terminal source runs have separate macOS permission entries.
 
-**System audio fails**: Install and route audio through BlackHole or an equivalent virtual input device. Native macOS loopback capture is not implemented yet.
+**System audio fails or says Check audio**: Install and route audio through BlackHole or an equivalent virtual input device. Selecting BlackHole as an input is not enough; the call audio must reach it. Native macOS loopback capture is not implemented yet.
 
-**Transcription is slow**: Use `small`, or use longer chunks if you can tolerate less frequent updates. `medium` and `large-v3` are expected to be slower on CPU.
+**Transcription is slow**: Live text appears after a chunk fills (8 seconds by default) and local inference finishes. Use `small` for the fastest CPU option. `medium` and `large-v3` are expected to be slower. `debug.log` records chunk inference time and queue depth without transcript text.
 
 **Transcript quality is poor**: Improve the input path first. Whisper quality depends heavily on clean audio, correct device routing, and speech volume.
 

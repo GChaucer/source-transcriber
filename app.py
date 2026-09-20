@@ -1,25 +1,36 @@
 #!/usr/bin/env python3
 """
 Source — UI built with CustomTkinter.
-recorder.py and transcriber.py are untouched.
+Local capture with optional OpenRouter summaries.
 """
 
 import datetime
 import json
 import multiprocessing
+import os
 import plistlib
 import queue
 import re
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 import tkinter as tk
 import customtkinter as ctk
 from pathlib import Path
 from tkinter import messagebox, simpledialog
 
-from recorder import AudioRecorder
+from recorder import SAMPLE_RATE, AudioRecorder
+from interpret import (
+    DEFAULT_MODEL as DEFAULT_OPENROUTER_MODEL,
+    InterpretationError,
+    request_interpretation,
+    save_interpretation,
+    transcript_body,
+    find_interpretation,
+    validate_transcript_size,
+)
 from transcriber import COMPUTE_TYPE, LANGUAGE, MODEL_OPTIONS, Transcriber
 
 ctk.set_appearance_mode("dark")
@@ -50,7 +61,7 @@ T_PRI     = "#ece8e0"   # primary  — transcript body, must read at a glance
 T_SEC     = "#beb8ae"   # secondary — headings, button text
 T_TER     = "#8a8f96"   # tertiary  — timestamps
 T_META    = "#9c978f"   # metadata  — footer path, utility notes
-T_GHOST   = "#4b4f55"   # placeholder text only
+T_GHOST   = "#9c978f"   # placeholder text only
 
 # Semantic / status
 GN = "#7aae87"    # recording active
@@ -236,6 +247,7 @@ _PILL: dict[str, tuple[str, str, str, str, str]] = {
     "loading":    (CHROME,      BORDER,    T_TER,  T_META, "Loading"),
     "ready":      (CHROME,      BORDER,    T_TER,  T_META, "Ready"),
     "recording":  ("#162119",   "#26412f", GN,     GN,     "Recording"),
+    "audio_warning": ("#211c15", "#433724", AM, AM, "Check audio"),
     "processing": ("#211c15",   "#433724", AM,     AM,     "Processing"),
     "saved":      ("#15201f",   "#2a4441", CY,     CY,     "Saved"),
     "error":      ("#241716",   "#4a2a27", RD,     RD,     "Error"),
@@ -254,10 +266,8 @@ class StatusPill:
             width=136,
         )
         self._frame.pack(side="right", padx=(0, 12))
-        self._frame.pack_propagate(False)
-
         row = ctk.CTkFrame(self._frame, fg_color="transparent")
-        row.place(relx=0.5, rely=0.5, anchor="center")
+        row.pack(padx=14, pady=2)
 
         self._dot = ctk.CTkLabel(row, text="●", font=F(7), text_color=T_TER, width=8)
         self._dot.pack(side="left")
@@ -280,8 +290,8 @@ class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__(fg_color=APP_BG)
         self.title("Source")
-        self.geometry("900x720")
-        self.minsize(720, 560)
+        self.geometry("1080x760")
+        self.minsize(960, 650)
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._debug_log_path = DEBUG_LOG_FILE
@@ -294,6 +304,9 @@ class App(ctk.CTk):
             self.transcriber.set_model(preferred_model)
 
         self.is_recording = False
+        self._finishing = False
+        self._interpret_busy = False
+        self._openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
         self._model_loading = False
         self._input_mode: str = "mic"   # "mic" | "system" | "mic_system"
         self.transcript_lines: list[str] = []
@@ -303,9 +316,10 @@ class App(ctk.CTk):
         self._session_meta_path: Path | None = None
         self._source_devices: dict[str, dict] = {}
         self._chunk_count = 0
+        self._system_signal_missing = False
+        self._capture_generation = 0
         self._selected_history_path: Path | None = None
         self._history_buttons: list[ctk.CTkButton] = []
-        self._history_collapsed = False
         self._glossary_prompt, self._glossary_terms = _load_glossary()
         self._log_debug(
             f"[app] launch source_mode={SOURCE_MODE} executable={sys.executable}"
@@ -617,36 +631,14 @@ class App(ctk.CTk):
             return self._session_path
         return None
 
-    def _apply_history_visibility(self) -> None:
-        if self._history_collapsed:
-            self._history_shell.configure(width=64)
-            self._history_title_lbl.pack_forget()
-            self._history_subtitle.pack_forget()
-            self._history_body.pack_forget()
-            self._history_toggle_btn.configure(text="‹")
-            self._history_toggle_btn.pack_forget()
-            self._history_toggle_btn.pack(expand=True)
-        else:
-            self._history_shell.configure(width=276)
-            self._history_toggle_btn.configure(text="›")
-            self._history_toggle_btn.pack_forget()
-            self._history_toggle_btn.pack(side="right")
-            self._history_title_lbl.pack(side="left")
-            self._history_subtitle.pack(anchor="w", pady=(2, 0))
-            self._history_body.pack(fill="both", expand=True, padx=0, pady=0)
-
-    def toggle_history_panel(self) -> None:
-        self._history_collapsed = not self._history_collapsed
-        self._apply_history_visibility()
-
     def _can_rename_selected(self) -> bool:
         target = self._selected_history_path
         if not (target and target.exists()):
             return False
-        return not (self.is_recording and target == self._session_path)
+        return not ((self.is_recording or self._finishing) and target == self._session_path)
 
     def _history_state(self) -> str:
-        return "disabled" if self.is_recording else "normal"
+        return "disabled" if (self.is_recording or self._finishing) else "normal"
 
     def _set_editor_content(self, content: str, tag: str | None = None) -> None:
         self._box.configure(state="normal")
@@ -655,7 +647,15 @@ class App(ctk.CTk):
         if tag:
             tb.insert("end", content, tag)
         else:
-            tb.insert("end", content)
+            for line in content.splitlines():
+                match = re.match(r"^(\[\d{2}:\d{2}:\d{2}\])\s*(.*)", line)
+                if match:
+                    tb.insert("end", match.group(1) + "\n", "ts")
+                    tb.insert("end", match.group(2) + "\n", "body")
+                elif line.startswith("#"):
+                    tb.insert("end", line.lstrip("# ") + "\n", "heading")
+                else:
+                    tb.insert("end", line + "\n")
         tb.see("1.0")
         self._box.configure(state="disabled")
 
@@ -667,10 +667,15 @@ class App(ctk.CTk):
             return "Unavailable"
         segments = len(re.findall(r"^\[\d{2}:\d{2}:\d{2}\]", text, flags=re.MULTILINE))
         stamp = mtime.strftime("%b %d, %Y  %I:%M %p")
-        return f"{stamp}  ·  {segments} seg{'s' if segments != 1 else ''}"
+        return stamp
+
+    def _recording_title(self, path: Path) -> str:
+        title = re.sub(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_?", "", path.stem).replace("-", " ").strip()
+        return title[:1].upper() + title[1:] if title else "Untitled recording"
 
     def _history_label(self, path: Path) -> str:
-        return f"{path.name}\n{self._history_summary(path)}"
+        title = self._recording_title(path)
+        return f"{title[:29] + '…' if len(title) > 30 else title}\n{self._history_summary(path)}"
 
     def _refresh_history(self, select: Path | None = None) -> None:
         paths = self._history_files()
@@ -717,7 +722,7 @@ class App(ctk.CTk):
         self._update_file_action_states()
 
     def _select_history_file(self, path: Path) -> None:
-        if self.is_recording or not path.exists():
+        if self.is_recording or self._finishing or not path.exists():
             return
         if not _is_recordings_path(path):
             self._show_error_state(
@@ -735,7 +740,8 @@ class App(ctk.CTk):
                 f"Details: {exc}",
             )
             return
-        self._set_editor_content(content)
+        self._view_btn.set("Transcript")
+        self._switch_view("Transcript")
         self._set_path()
         self._refresh_history(select=path)
 
@@ -746,10 +752,10 @@ class App(ctk.CTk):
         rename_state = "normal" if self._can_rename_selected() and history_state == "normal" else "disabled"
 
         self._save_btn.configure(state=reveal_state)
-        if not self._history_collapsed:
-            self._open_btn.configure(state=history_state if self._selected_history_path else "disabled")
-            self._reveal_btn.configure(state=history_state if self._selected_history_path else "disabled")
-            self._rename_btn.configure(state=rename_state)
+        self._interpret_btn.configure(
+            state="normal" if target and history_state == "normal" and not self._interpret_busy else "disabled"
+        )
+        self._rename_btn.configure(state=rename_state)
         for button in self._history_buttons:
             button.configure(state=history_state)
 
@@ -871,6 +877,7 @@ class App(ctk.CTk):
     def _set_recording_controls_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
         self._clear_btn.configure(state=state)
+        self._view_btn.configure(state=state)
         self._chunk_btn.configure(state=state)
         self._input_btn.configure(state=state)
         self._model_btn.configure(state="disabled" if (not enabled or self._model_loading) else "normal")
@@ -878,9 +885,10 @@ class App(ctk.CTk):
 
     def _set_idle_state(self) -> None:
         self.is_recording = False
+        self._finishing = False
         self._rec_btn.configure(
             state="normal",
-            text="▶   Start Recording",
+            text="Start recording",
             fg_color=PRI_FACE,
             hover_color=PRI_HOV,
             text_color=PRI_TEXT,
@@ -897,433 +905,299 @@ class App(ctk.CTk):
         if dialog:
             messagebox.showerror("Source", dialog)
 
+    def _button(self, parent, text, command, **kwargs):
+        return ctk.CTkButton(parent, text=text, command=command, font=F(12),
+                            fg_color=BTN_FACE, hover_color=BTN_HOV, text_color=T_PRI,
+                            height=34, corner_radius=8, **kwargs)
+
     def _build_header(self) -> None:
-        shell = ctk.CTkFrame(self, corner_radius=0, fg_color=APP_BG, height=54)
-        shell.pack(fill="x", side="top")
-        shell.pack_propagate(False)
-
-        hdr = ctk.CTkFrame(
-            shell,
-            corner_radius=14,
-            fg_color=CHROME,
-            border_width=1,
-            border_color=BORDER,
-            height=38,
-        )
-        hdr.pack(fill="x", padx=18, pady=(12, 4))
-        hdr.pack_propagate(False)
-
-        left = ctk.CTkFrame(hdr, fg_color="transparent")
-        left.pack(side="left", padx=14)
-
-        ctk.CTkLabel(
-            left,
-            text="Source",
-            font=F(13),
-            text_color=T_SEC,
-            anchor="w",
-        ).pack(side="left")
-
-        ctk.CTkLabel(
-            left,
-            text="local",
-            font=F(10),
-            text_color=T_TER,
-            anchor="w",
-        ).pack(side="left", padx=(8, 0))
-
-        self.pill = StatusPill(hdr)
+        header = ctk.CTkFrame(self, fg_color=APP_BG, corner_radius=0, height=62)
+        header.pack(fill="x", padx=22, pady=(10, 4))
+        ctk.CTkLabel(header, text="Source", font=F(22, "bold"), text_color=T_PRI).pack(side="left")
+        ctk.CTkLabel(header, text="Local transcription", font=F(12), text_color=T_SEC).pack(side="left", padx=14)
+        self._button(header, "Settings", self.open_settings, width=82).pack(side="right", padx=(8, 0))
+        self.pill = StatusPill(header)
 
     def _build_footer(self) -> None:
-        shell = ctk.CTkFrame(self, corner_radius=0, fg_color=APP_BG, height=42)
-        shell.pack(fill="x", side="bottom")
-        shell.pack_propagate(False)
-
-        foot = ctk.CTkFrame(
-            shell,
-            corner_radius=12,
-            fg_color=CHROME,
-            border_width=1,
-            border_color=BORDER,
-            height=30,
-        )
-        foot.pack(fill="x", padx=18, pady=(0, 10))
-        foot.pack_propagate(False)
-
-        self._path_var = tk.StringVar(value="  recordings/")
-        ctk.CTkLabel(
-            foot,
-            textvariable=self._path_var,
-            font=FM(10),
-            text_color=T_META,
-            anchor="w",
-        ).pack(side="left", padx=12)
+        # Paths stay available through Show in Finder, rather than taking up a row.
+        self._path_var = tk.StringVar()
 
     def _build_ctrl_bar(self) -> None:
-        shell = ctk.CTkFrame(self, corner_radius=0, fg_color=APP_BG, height=88)
-        shell.pack(fill="x", side="bottom")
-        shell.pack_propagate(False)
-
-        bar = ctk.CTkFrame(
-            shell,
-            corner_radius=18,
-            fg_color=CHROME,
-            border_width=1,
-            border_color=BORDER,
-            height=64,
-        )
-        bar.pack(fill="x", padx=18, pady=(0, 10))
-        bar.pack_propagate(False)
-
-        # Left group
-        left = ctk.CTkFrame(bar, fg_color="transparent")
-        left.place(relx=0, rely=0.5, anchor="w", x=14)
-
+        bar = ctk.CTkFrame(self, fg_color=APP_BG, corner_radius=0)
+        bar.pack(fill="x", side="bottom", padx=24, pady=(12, 20))
         self._rec_btn = ctk.CTkButton(
-            left,
-            text="▶   Start Recording",
-            font=F(12, "bold"),
-            fg_color=PRI_FACE,
-            hover_color=PRI_HOV,
-            text_color=PRI_TEXT,
-            corner_radius=18,
-            width=184,
-            height=38,
-            cursor="hand2",
-            command=self.toggle_recording,
-            state="disabled",
-        )
+            bar, text="Start recording", command=self.toggle_recording,
+            font=F(14, "bold"), fg_color=PRI_FACE, hover_color=PRI_HOV,
+            text_color=PRI_TEXT, height=42, width=172, corner_radius=10, state="disabled")
         self._rec_btn.pack(side="left")
-
-        self._save_btn = ctk.CTkButton(
-            left,
-            text="Reveal",
-            font=F(12),
-            fg_color=BTN_FACE,
-            hover_color=BTN_HOV,
-            text_color=T_SEC,
-            border_width=1,
-            border_color=BORDER_HI,
-            corner_radius=10,
-            width=78,
-            height=34,
-            cursor="hand2",
-            command=self.reveal_selected_file,
-            state="disabled",
-        )
-        self._save_btn.pack(side="left", padx=(10, 0))
-
-        ctk.CTkLabel(
-            left, text="Model", font=F(11), text_color=T_META
-        ).pack(side="left", padx=(20, 8))
-
-        self._model_btn = ctk.CTkSegmentedButton(
-            left,
-            values=list(MODEL_OPTIONS),
-            font=F(11),
-            fg_color=BTN_FACE,
-            selected_color=SEL_FACE,
-            selected_hover_color=SEL_FACE,
-            unselected_color=BTN_FACE,
-            unselected_hover_color=BTN_HOV,
-            text_color=T_PRI,
-            corner_radius=10,
-            height=34,
-            width=224,
-            command=self._on_model_selected,
-        )
-        self._model_btn.set(self.transcriber.model_name)
-        self._model_btn.pack(side="left")
-
-        ctk.CTkLabel(
-            left, text="Chunk", font=F(11), text_color=T_META
-        ).pack(side="left", padx=(20, 8))
-
-        self._chunk_btn = ctk.CTkSegmentedButton(
-            left,
-            values=CHUNK_OPTIONS,
-            font=F(11),
-            fg_color=BTN_FACE,
-            selected_color=SEL_FACE,
-            selected_hover_color=SEL_FACE,
-            unselected_color=BTN_FACE,
-            unselected_hover_color=BTN_HOV,
-            text_color=T_PRI,
-            corner_radius=10,
-            height=34,
-            command=lambda _: self._refresh_meta(),
-        )
-        self._chunk_btn.set("8s")
-        self._chunk_btn.pack(side="left")
-
-        right = ctk.CTkFrame(bar, fg_color="transparent")
-        right.place(relx=1.0, rely=0.5, anchor="e", x=-14)
-
-        ctk.CTkLabel(
-            right, text="Input", font=F(11), text_color=T_META
-        ).pack(side="left", padx=(0, 8))
-
         self._input_btn = ctk.CTkSegmentedButton(
-            right,
-            values=INPUT_OPTIONS,
-            font=F(11),
-            fg_color=BTN_FACE,
-            selected_color=SEL_FACE,
-            selected_hover_color=SEL_FACE,
-            unselected_color=BTN_FACE,
-            unselected_hover_color=BTN_HOV,
-            text_color=T_PRI,
-            corner_radius=10,
-            height=34,
-            width=218,
-            command=self._on_input_selected,
-        )
+            bar, values=INPUT_OPTIONS, command=self._on_input_selected,
+            font=F(12), fg_color=BTN_FACE, selected_color=SEL_FACE,
+            selected_hover_color=SEL_FACE, unselected_color=BTN_FACE,
+            unselected_hover_color=BTN_HOV, text_color=T_PRI, height=34)
         self._input_btn.set("Mic")
-        self._input_btn.pack(side="left", padx=(0, 16))
+        self._input_btn.pack(side="right")
+        ctk.CTkLabel(bar, text="Audio input", font=F(12), text_color=T_SEC).pack(side="right", padx=12)
+        self._settings_dialog = ctk.CTkToplevel(self)
+        self._settings_dialog.withdraw()
+        self._settings_dialog.title("Source settings")
+        self._settings_dialog.geometry("540x540")
+        self._settings_dialog.resizable(False, False)
+        self._settings_dialog.configure(fg_color=APP_BG)
+        self._settings_dialog.protocol("WM_DELETE_WINDOW", self._settings_dialog.withdraw)
+        panel = ctk.CTkFrame(self._settings_dialog, fg_color="transparent")
+        panel.pack(fill="both", expand=True, padx=28, pady=22)
+        ctk.CTkLabel(panel, text="Settings", font=F(22, "bold"), text_color=T_PRI).pack(anchor="w")
+        ctk.CTkLabel(panel, text="OpenRouter · optional summaries", font=F(15, "bold"), text_color=T_PRI).pack(anchor="w", pady=(20, 4))
+        ctk.CTkLabel(panel, text="Recording works without a key. Summaries send the selected\ntranscript to OpenRouter only when you request them.",
+                     font=F(12), text_color=T_SEC, justify="left").pack(anchor="w")
+        ctk.CTkLabel(panel, text="OpenRouter API key", font=F(12), text_color=T_SEC).pack(anchor="w", pady=(10, 0))
+        self._key_setting = ctk.CTkEntry(panel, show="•", placeholder_text="Paste your OpenRouter API key", height=38, width=460)
+        self._key_setting.insert(0, self._openrouter_key)
+        self._key_setting.pack(fill="x", pady=(12, 6))
+        row = ctk.CTkFrame(panel, fg_color="transparent")
+        row.pack(fill="x")
+        self._button(row, "Use key this session", self._apply_key, width=165).pack(side="left")
+        self._button(row, "Get an API key ↗", lambda: webbrowser.open("https://openrouter.ai/settings/keys"), width=145).pack(side="right")
+        self._key_status = ctk.CTkLabel(panel, text="Key stays in memory until you quit. Free models only.", font=F(11), text_color=T_SEC)
+        self._key_status.pack(anchor="w", pady=(6, 18))
+        ctk.CTkLabel(panel, text="Local transcription", font=F(15, "bold"), text_color=T_PRI).pack(anchor="w")
+        ctk.CTkLabel(panel, text="Small is fastest. Larger models use more CPU and memory.", font=F(12), text_color=T_SEC).pack(anchor="w", pady=(4, 6))
+        self._model_btn = ctk.CTkSegmentedButton(panel, values=list(MODEL_OPTIONS), command=self._on_model_selected, selected_color=SEL_FACE, selected_hover_color=SEL_FACE)
+        self._model_btn.set(self.transcriber.model_name)
+        self._model_btn.pack(anchor="w")
+        ctk.CTkLabel(panel, text="Update interval · shorter chunks may reduce accuracy", font=F(12), text_color=T_SEC).pack(anchor="w", pady=(14, 6))
+        self._chunk_btn = ctk.CTkSegmentedButton(panel, values=CHUNK_OPTIONS, command=lambda _: self._refresh_meta(), selected_color=SEL_FACE, selected_hover_color=SEL_FACE)
+        self._chunk_btn.set("8s")
+        self._chunk_btn.pack(anchor="w")
 
-        self._clear_btn = ctk.CTkButton(
-            right,
-            text="Clear",
-            font=F(12),
-            fg_color=BTN_FACE,
-            hover_color=BTN_HOV,
-            text_color=T_META,
-            border_width=1,
-            border_color=BORDER,
-            corner_radius=10,
-            width=72,
-            height=34,
-            cursor="hand2",
-            command=self.clear_transcript,
-        )
-        self._clear_btn.pack(side="left")
+    def open_settings(self) -> None:
+        self._key_setting.delete(0, "end")
+        self._key_setting.insert(0, self._openrouter_key)
+        self._settings_dialog.deiconify()
+        self._settings_dialog.lift()
+
+    def _apply_key(self) -> None:
+        self._openrouter_key = self._key_setting.get().strip()
+        self._key_status.configure(text="Key added for this session (not yet verified)." if self._openrouter_key else "Key cleared. Local recording still works.")
 
     def _build_workspace(self) -> None:
-        outer = ctk.CTkFrame(self, fg_color=APP_BG, corner_radius=0)
-        outer.pack(fill="both", expand=True)
-
-        card = ctk.CTkFrame(
-            outer,
-            corner_radius=20,
-            fg_color=CARD_BG,
-            border_width=1,
-            border_color=BORDER,
-        )
-        card.pack(fill="both", expand=True, padx=18, pady=(6, 12))
-
-        header = ctk.CTkFrame(card, fg_color="transparent", height=60)
-        header.pack(fill="x", padx=20, pady=(16, 8))
-        header.pack_propagate(False)
-
-        header_left = ctk.CTkFrame(header, fg_color="transparent")
-        header_left.pack(side="left")
-
-        ctk.CTkLabel(
-            header_left,
-            text="Transcript",
-            font=F(14),
-            text_color=T_SEC,
-            anchor="w",
-        ).pack(anchor="w")
-
-        ctk.CTkLabel(
-            header_left,
-            text="Project-local autosave with quiet live capture.",
-            font=F(11),
-            text_color=T_TER,
-            anchor="w",
-        ).pack(anchor="w", pady=(3, 0))
-
+        content = ctk.CTkFrame(self, fg_color=APP_BG, corner_radius=0)
+        content.pack(fill="both", expand=True, padx=18, pady=10)
+        self._history_shell = ctk.CTkFrame(content, fg_color=CHROME, corner_radius=10, width=245)
+        self._history_shell.pack(side="left", fill="y", padx=(0, 18))
+        self._history_shell.pack_propagate(False)
+        self._history_title_lbl = ctk.CTkLabel(self._history_shell, text="Recordings", font=F(15, "bold"), text_color=T_PRI)
+        self._history_title_lbl.pack(anchor="w", padx=16, pady=(16, 8))
+        self._clear_btn = self._button(self._history_shell, "+ New recording", self.clear_transcript)
+        self._clear_btn.pack(fill="x", padx=12, pady=(0, 12))
+        self._history_body = ctk.CTkFrame(self._history_shell, fg_color="transparent")
+        self._history_body.pack(fill="both", expand=True)
+        self._history_list = ctk.CTkScrollableFrame(self._history_body, fg_color="transparent", corner_radius=0)
+        self._history_list.pack(fill="both", expand=True, padx=6, pady=(0, 12))
+        main = ctk.CTkFrame(content, fg_color=EDITOR_BG, corner_radius=10)
+        main.pack(side="left", fill="both", expand=True)
+        self._title_var = tk.StringVar(value="Ready for a conversation")
+        ctk.CTkLabel(main, textvariable=self._title_var, font=F(22, "bold"), text_color=T_PRI, anchor="w", wraplength=570).pack(fill="x", padx=26, pady=(24, 4))
         self._meta_var = tk.StringVar()
-        ctk.CTkLabel(
-            header,
-            textvariable=self._meta_var,
-            font=F(11),
-            text_color=T_META,
-            anchor="e",
-        ).pack(side="right")
-
-        ctk.CTkFrame(
-            card,
-            fg_color=RULE,
-            corner_radius=0,
-            height=1,
-        ).pack(fill="x", padx=18, pady=(0, 12))
-
-        content = ctk.CTkFrame(card, fg_color="transparent")
-        content.pack(fill="both", expand=True)
-
-        editor_shell = ctk.CTkFrame(
-            content,
-            fg_color=EDITOR_BG,
-            corner_radius=18,
-            border_width=1,
-            border_color=BORDER,
-        )
-        editor_shell.pack(side="left", fill="both", expand=True, padx=(16, 8), pady=(0, 16))
-
-        self._box = ctk.CTkTextbox(
-            editor_shell,
-            font=FM(15),
-            fg_color=EDITOR_BG,
-            text_color=T_PRI,
-            corner_radius=18,
-            border_width=0,
-            scrollbar_button_color=BTN_FACE,
-            scrollbar_button_hover_color=BTN_HOV,
-            activate_scrollbars=True,
-            wrap="word",
-            state="disabled",
-        )
-        self._box.pack(fill="both", expand=True, padx=2, pady=2)
-
-        # Tag-based styling on the internal tk.Text
-        tb = self._box._textbox
-        tb.configure(
-            padx=36,
-            pady=26,
-            spacing3=0,
-            insertbackground=T_PRI,
-            selectbackground="#2b3037",
-            selectforeground=T_PRI,
-        )
-        tb.tag_configure("ts", font=("Menlo", 11), foreground=T_TER)
-        tb.tag_configure("body", font=("Menlo", 15), foreground=T_PRI, spacing3=22)
-        tb.tag_configure(
-            "ph",
-            font=("Helvetica Neue", 13),
-            foreground=T_GHOST,
-            justify="center",
-        )
-
+        ctk.CTkLabel(main, textvariable=self._meta_var, font=F(12), text_color=T_SEC, anchor="w", wraplength=570, justify="left").pack(fill="x", padx=26, pady=(0, 18))
+        actions = ctk.CTkFrame(main, fg_color="transparent")
+        actions.pack(fill="x", padx=26, pady=(0, 12))
+        self._view_btn = ctk.CTkSegmentedButton(actions, values=["Transcript", "Summary"], command=self._switch_view, font=F(12), selected_color=SEL_FACE, selected_hover_color=SEL_FACE)
+        self._view_btn.set("Transcript")
+        self._view_btn.pack(side="left")
+        self._save_btn = self._button(actions, "Show in Finder", self.reveal_selected_file, width=110, state="disabled")
+        self._save_btn.pack(side="right")
+        utility = ctk.CTkFrame(main, fg_color="transparent")
+        utility.pack(fill="x", padx=26)
+        self._rename_btn = self._button(utility, "Rename", self.rename_selected_file, width=76, state="disabled")
+        self._rename_btn.pack(side="right")
+        self._button(utility, "Copy text", self._copy_visible, width=90).pack(side="right", padx=8)
+        self._box = ctk.CTkTextbox(main, font=F(16), fg_color=EDITOR_BG, text_color=T_PRI, border_width=0, wrap="word", state="disabled")
+        self._box.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self._box._textbox.configure(padx=14, pady=14, spacing1=3, spacing3=10)
+        self._box._textbox.tag_configure("heading", font=("Helvetica Neue", 18, "bold"), foreground=T_PRI, spacing1=14, spacing3=10)
+        self._box._textbox.tag_configure("ts", font=("Helvetica Neue", 11), foreground=T_META)
+        self._box._textbox.tag_configure("body", font=("Helvetica Neue", 16), foreground=T_PRI, spacing3=16)
+        self._box._textbox.tag_configure("ph", font=("Helvetica Neue", 16), foreground=T_SEC)
+        self._interpret_btn = self._button(main, "Summarize with OpenRouter", self.open_interpret_dialog, state="disabled")
+        self._interpret_btn.pack(fill="x", padx=26, pady=(0, 20))
         self._refresh_meta()
         self._show_placeholder()
-
-        self._history_shell = ctk.CTkFrame(
-            content,
-            fg_color=CHROME,
-            corner_radius=16,
-            border_width=1,
-            border_color=BORDER,
-            width=276,
-        )
-        self._history_shell.pack(side="right", fill="y", padx=(8, 16), pady=(0, 16))
-        self._history_shell.pack_propagate(False)
-
-        history_header = ctk.CTkFrame(self._history_shell, fg_color="transparent", height=48)
-        history_header.pack(fill="x", padx=14, pady=(12, 6))
-        history_header.pack_propagate(False)
-
-        title_row = ctk.CTkFrame(history_header, fg_color="transparent")
-        title_row.pack(fill="x")
-
-        self._history_title_lbl = ctk.CTkLabel(
-            title_row,
-            text="Recordings",
-            font=F(13),
-            text_color=T_SEC,
-            anchor="w",
-        )
-        self._history_title_lbl.pack(side="left")
-
-        self._history_toggle_btn = ctk.CTkButton(
-            title_row,
-            text="›",
-            font=F(10),
-            fg_color=BTN_FACE,
-            hover_color=BTN_HOV,
-            text_color=T_META,
-            border_width=1,
-            border_color=BORDER,
-            corner_radius=8,
-            width=28,
-            height=24,
-            command=self.toggle_history_panel,
-        )
-        self._history_toggle_btn.pack(side="right")
-
-        self._history_subtitle = ctk.CTkLabel(
-            history_header,
-            text="Newest first",
-            font=F(10),
-            text_color=T_TER,
-            anchor="w",
-        )
-        self._history_subtitle.pack(anchor="w", pady=(2, 0))
-
-        self._history_body = ctk.CTkFrame(self._history_shell, fg_color="transparent")
-        self._history_body.pack(fill="both", expand=True, padx=0, pady=0)
-
-        action_row = ctk.CTkFrame(self._history_body, fg_color="transparent", height=36)
-        action_row.pack(fill="x", padx=14, pady=(0, 8))
-        action_row.pack_propagate(False)
-
-        self._open_btn = ctk.CTkButton(
-            action_row,
-            text="Open",
-            font=F(11),
-            fg_color=BTN_FACE,
-            hover_color=BTN_HOV,
-            text_color=T_SEC,
-            border_width=1,
-            border_color=BORDER,
-            corner_radius=9,
-            width=72,
-            height=32,
-            command=self.open_selected_file,
-            state="disabled",
-        )
-        self._open_btn.pack(side="left")
-
-        self._reveal_btn = ctk.CTkButton(
-            action_row,
-            text="Reveal",
-            font=F(11),
-            fg_color=BTN_FACE,
-            hover_color=BTN_HOV,
-            text_color=T_SEC,
-            border_width=1,
-            border_color=BORDER,
-            corner_radius=9,
-            width=76,
-            height=32,
-            command=self.reveal_selected_file,
-            state="disabled",
-        )
-        self._reveal_btn.pack(side="left", padx=(8, 0))
-
-        self._rename_btn = ctk.CTkButton(
-            action_row,
-            text="Rename",
-            font=F(11),
-            fg_color=BTN_FACE,
-            hover_color=BTN_HOV,
-            text_color=T_SEC,
-            border_width=1,
-            border_color=BORDER,
-            corner_radius=9,
-            width=84,
-            height=32,
-            command=self.rename_selected_file,
-            state="disabled",
-        )
-        self._rename_btn.pack(side="left", padx=(8, 0))
-
-        self._history_list = ctk.CTkScrollableFrame(
-            self._history_body,
-            fg_color="transparent",
-            corner_radius=0,
-        )
-        self._history_list.pack(fill="both", expand=True, padx=14, pady=(0, 12))
         self._refresh_history()
-        self._apply_history_visibility()
+
+    def _copy_visible(self) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(self._box.get("1.0", "end").strip())
+
+    def _switch_view(self, view: str) -> None:
+        if self.is_recording or self._finishing:
+            self._view_btn.set("Transcript")
+            return
+        target = self._selected_file_for_actions()
+        if not target:
+            self._set_editor_content("Select a recording to read its " + view.lower() + ".", "ph")
+            return
+        try:
+            source = target.read_text(encoding="utf-8")
+            body = transcript_body(source)
+            if view == "Transcript":
+                self._meta_var.set("Original transcript · Saved on this Mac")
+                self._set_editor_content(body)
+            else:
+                result = find_interpretation(source, RECORDINGS_DIR)
+                self._meta_var.set("AI-generated summary · Check against the original transcript" if result else "Optional summary · Free OpenRouter model")
+                self._set_editor_content(result.read_text(encoding="utf-8").split("\n\n", 2)[-1] if result else
+                    "Turn this conversation into a brief.\n\nOpenRouter creates a summary, key points, decisions and open questions. Your original transcript stays unchanged.\n\nAdd your OpenRouter API key in Settings, then choose Summarize below.", None if result else "ph")
+        except (OSError, UnicodeError, InterpretationError) as exc:
+            self._set_editor_content(f"Unable to display recording: {exc}", "ph")
 
     def _show_placeholder(self) -> None:
         self._set_editor_content(
-            "\n\n\n\n\nTranscript will appear here as you record.\n\n"
-            "Autosaves stay inside this project in recordings/.",
+            "Start a recording to capture your conversation.\n\n"
+            "Audio and transcripts are saved on this Mac.\nSelect a previous recording from the sidebar to read or summarize it.",
             "ph",
         )
+
+    def open_interpret_dialog(self) -> None:
+        source_path = self._selected_file_for_actions()
+        if self.is_recording or self._finishing or self._interpret_busy or not source_path:
+            return
+        if not _is_recordings_path(source_path):
+            messagebox.showerror("Source", "The selected transcript is outside the recordings folder.")
+            return
+        try:
+            source_content = source_path.read_text(encoding="utf-8")
+            body = transcript_body(source_content)
+            validate_transcript_size(body)
+        except (OSError, UnicodeError, InterpretationError) as exc:
+            messagebox.showerror("Source", f"Unable to open the transcript.\n\n{exc}")
+            return
+
+        existing = getattr(self, "_interpret_dialog", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            return
+        dialog = ctk.CTkToplevel(self)
+        self._interpret_dialog = dialog
+        dialog.title("Summarize with OpenRouter")
+        dialog.geometry("700x610")
+        dialog.minsize(700, 610)
+        dialog.configure(fg_color=APP_BG)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        frame = ctk.CTkFrame(dialog, fg_color=APP_BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=18)
+        ctk.CTkLabel(
+            frame, text="Summarize with OpenRouter", font=F(19, "bold"),
+            text_color=T_PRI, anchor="w",
+        ).pack(fill="x")
+        ctk.CTkLabel(
+            frame, text=source_path.name, font=FM(11), text_color=T_META, anchor="w",
+        ).pack(fill="x", pady=(4, 12))
+        ctk.CTkLabel(
+            frame,
+            text=("Only the transcript text shown below is sent when you click Send. "
+                  "Free providers may retain or train on submitted text. Use a sample "
+                  "for interviews or other private conversations."),
+            font=F(11), text_color=T_SEC, wraplength=650, justify="left", anchor="w",
+        ).pack(fill="x", pady=(0, 14))
+
+        ctk.CTkLabel(frame, text="Automatic free model · no paid fallback", font=F(12), text_color=T_SEC,
+                     anchor="w").pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(frame, text="OpenRouter API key (kept in memory for this run)",
+                     font=F(11), text_color=T_META, anchor="w").pack(fill="x")
+        key_entry = ctk.CTkEntry(
+            frame, show="•", font=FM(12), fg_color=EDITOR_BG, text_color=T_PRI,
+            border_color=BORDER_HI, height=36,
+        )
+        key_entry.insert(0, self._openrouter_key)
+        key_entry.pack(fill="x", pady=(4, 12))
+
+        status = tk.StringVar(value=f"Preview · {len(body):,} characters · free models only")
+        ctk.CTkLabel(frame, textvariable=status, font=F(11), text_color=T_META,
+                     anchor="w").pack(fill="x", pady=(0, 5))
+        preview = ctk.CTkTextbox(
+            frame, font=FM(11), fg_color=EDITOR_BG, text_color=T_PRI,
+            border_width=1, border_color=BORDER, wrap="word",
+        )
+        preview.insert("1.0", body)
+        preview.configure(state="disabled")
+        preview.pack(fill="both", expand=True, pady=(0, 12))
+
+        buttons = ctk.CTkFrame(frame, fg_color="transparent")
+        buttons.pack(fill="x")
+        send_button = ctk.CTkButton(
+            buttons, text="Send transcript to OpenRouter", font=F(12, "bold"),
+            fg_color=PRI_FACE, hover_color=PRI_HOV, text_color=PRI_TEXT,
+            width=220, command=lambda: send(),
+        )
+        send_button.pack(side="left")
+        ctk.CTkButton(
+            buttons, text="Close", font=F(12), fg_color=BTN_FACE,
+            hover_color=BTN_HOV, text_color=T_SEC, width=90,
+            command=dialog.destroy,
+        ).pack(side="right")
+
+        def finish(result=None, output_path=None, error=None):
+            self._interpret_busy = False
+            self._update_file_action_states()
+            if not dialog.winfo_exists():
+                return
+            send_button.configure(state="normal")
+            if error:
+                status.set(error)
+                return
+            dialog.destroy()
+            if (not self.is_recording and not self._finishing
+                    and self._selected_file_for_actions() == source_path):
+                self._select_history_file(source_path)
+                self._view_btn.set("Summary")
+                self._switch_view("Summary")
+
+
+        def send():
+            if self._interpret_busy or self.is_recording or self._finishing:
+                return
+            model = DEFAULT_OPENROUTER_MODEL
+            key = key_entry.get().strip()
+            if model != "openrouter/free" and not model.endswith(":free"):
+                status.set("Free models only: use openrouter/free or a model ending in :free.")
+                return
+            if not key:
+                status.set("Enter an OpenRouter API key.")
+                return
+            try:
+                if source_path.read_text(encoding="utf-8") != source_content:
+                    status.set("Transcript changed since preview. Close and reopen it before sending.")
+                    return
+            except (OSError, UnicodeError):
+                status.set("Transcript is no longer available. Close and reopen it.")
+                return
+            self._openrouter_key = key
+
+            self._interpret_busy = True
+            self._update_file_action_states()
+            send_button.configure(state="disabled")
+            status.set("Waiting for OpenRouter…")
+
+            def work():
+                try:
+                    result = request_interpretation(body, model, key)
+                    output_path = save_interpretation(
+                        source_path, source_content, result, RECORDINGS_DIR
+                    )
+                except InterpretationError as exc:
+                    self.after(0, finish, None, None, str(exc))
+                except OSError:
+                    self.after(0, finish, None, None, "Interpretation returned, but saving failed.")
+                except Exception:
+                    self.after(0, finish, None, None, "Unable to complete the summary. Please retry.")
+                else:
+                    self.after(0, finish, result, output_path, None)
+
+            threading.Thread(target=work, daemon=True).start()
 
     # ── Model loading ─────────────────────────────────────────────────────────
 
@@ -1411,6 +1285,8 @@ class App(ctk.CTk):
             self._stop()
 
     def _start(self) -> None:
+        if self._finishing:
+            return
         self._log_debug("[app] start requested")
         ok, message, system_device = self._preflight_recording()
         if not ok:
@@ -1421,9 +1297,11 @@ class App(ctk.CTk):
             self._refresh_meta()
             return
 
+        self._view_btn.set("Transcript")
         self.session_start = datetime.datetime.now()
         self.transcript_lines = []
         self._chunk_count = 0
+        self._system_signal_missing = False
         self._session_path = _session_file(self.session_start, "interview")
         self._audio_paths, self._session_meta_path = self._sidecar_paths_for(
             self._session_path, self._input_mode
@@ -1474,6 +1352,7 @@ class App(ctk.CTk):
             self._refresh_meta()
             return
         self._log_debug(f"[app] start succeeded: {startup}")
+        self._capture_generation += 1
         self._source_devices = startup.get("selected_input_devices", {}) if isinstance(startup, dict) else {}
         self.is_recording = True
         self._rec_btn.configure(
@@ -1485,14 +1364,17 @@ class App(ctk.CTk):
         self._save_btn.configure(state="disabled")
         self._set_recording_controls_enabled(False)
         self.pill.set("recording")
+        if self._input_mode in ("system", "mic_system"):
+            self.after(10000, self._check_system_audio, self._capture_generation)
         self._set_path()
-        self._refresh_meta()
+        self._tick_capture(self._capture_generation)
         threading.Thread(target=self._consume_chunks, daemon=True).start()
         self._refresh_history()
 
     def _stop(self) -> None:
         self._log_debug(f"[app] stop requested recorder={self.recorder.diagnostics_snapshot()}")
         self.is_recording = False
+        self._finishing = True
         self.recorder.stop()
         self._rec_btn.configure(
             state="disabled",
@@ -1502,6 +1384,33 @@ class App(ctk.CTk):
         )
         self.pill.set("processing")
 
+    def _tick_capture(self, generation: int) -> None:
+        if not self.is_recording or generation != self._capture_generation:
+            return
+        seconds = int((datetime.datetime.now() - self.session_start).total_seconds())
+        levels = self.recorder.diagnostics_snapshot().get("source_level", {})
+        sources = ["mic", "system"] if self._input_mode == "mic_system" else [self._input_mode]
+        signals = " · ".join(f"{source.title()}: {'signal' if levels.get(source, 0) >= 0.001 else 'quiet'}" for source in sources)
+        self._meta_var.set(f"{seconds // 60:02d}:{seconds % 60:02d} recording · {signals} · Saving locally")
+        self.after(1000, self._tick_capture, generation)
+
+    def _set_capture_status(self, count: int) -> None:
+        if not self.is_recording:
+            return
+        if self._system_signal_missing:
+            self.pill.set("audio_warning", "System input has no signal")
+        else:
+            self.pill.set("recording", "Saving locally")
+
+    def _check_system_audio(self, generation: int) -> None:
+        if (generation != self._capture_generation or not self.is_recording
+                or self._input_mode not in ("system", "mic_system")):
+            return
+        levels = self.recorder.diagnostics_snapshot().get("source_max_level", {})
+        self._system_signal_missing = levels.get("system", 0.0) < 0.001
+        self._set_capture_status(self._chunk_count)
+        self.after(10000, self._check_system_audio, generation)
+
     def _consume_chunks(self) -> None:
         while True:
             chunk = self.chunk_queue.get()
@@ -1509,9 +1418,11 @@ class App(ctk.CTk):
                 self.after(0, self._on_done)
                 break
             try:
+                started = time.perf_counter()
                 text = self.transcriber.transcribe_chunk(
                     chunk, initial_prompt=self._glossary_prompt
                 )
+                elapsed = time.perf_counter() - started
             except Exception as exc:
                 self._log_debug(f"[app] transcription failed: {exc}")
                 if self.is_recording:
@@ -1529,10 +1440,12 @@ class App(ctk.CTk):
                     f"Details: {exc}",
                 )
                 break
+            self._log_debug(
+                f"[app] chunk processed duration={len(chunk) / SAMPLE_RATE:.1f}s "
+                f"inference={elapsed:.2f}s text_chars={len(text)} "
+                f"queued={self.chunk_queue.qsize()}"
+            )
             if text:
-                self._log_debug(
-                    f"[app] chunk transcribed len={len(text)} recorder={self.recorder.diagnostics_snapshot()}"
-                )
                 self._chunk_count += 1
                 ts = datetime.datetime.now().strftime("%H:%M:%S")
                 line = f"[{ts}] {text}"
@@ -1541,10 +1454,7 @@ class App(ctk.CTk):
                 write_ok = self._write_session()
                 n = self._chunk_count
                 if write_ok:
-                    self.after(
-                        0, self.pill.set, "recording",
-                        f"{n} chunk{'s' if n != 1 else ''}"
-                    )
+                    self.after(0, self._set_capture_status, n)
                 else:
                     if self.is_recording:
                         self.is_recording = False
@@ -1566,7 +1476,7 @@ class App(ctk.CTk):
         tb = self._box._textbox
         self._box.configure(state="normal")
         if m:
-            tb.insert("end", m.group(1) + "  ", "ts")
+            tb.insert("end", m.group(1) + "\n", "ts")
             tb.insert("end", m.group(2) + "\n\n", "body")
         else:
             tb.insert("end", line + "\n\n", "body")
@@ -1582,7 +1492,7 @@ class App(ctk.CTk):
             persisted = self._write_session()
             if persisted and finalized:
                 n = len(self.transcript_lines)
-                self.pill.set("saved", f"{n} seg{'s' if n != 1 else ''}")
+                self.pill.set("saved", "Transcript saved")
             elif persisted:
                 self.pill.set("error", "Name unchanged")
                 messagebox.showwarning(
@@ -1734,22 +1644,11 @@ class App(ctk.CTk):
     # ── Utility ──────────────────────────────────────────────────────────────
 
     def _refresh_meta(self) -> None:
-        chunk = self._chunk_btn.get() if hasattr(self, "_chunk_btn") else CHUNK_OPTIONS[1]
-        model_name = self.transcriber.model_name
-        model = f"Model {model_name}"
-        if model_name != "small":
-            model += " · slower"
-        glossary = (
-            f"Glossary {len(self._glossary_terms)} terms"
-            if self._glossary_terms
-            else "Glossary none"
-        )
-        segments = f"{self._chunk_count} segment{'s' if self._chunk_count != 1 else ''}"
-        input_label = _display_input_mode(self._input_mode)
-        self._meta_var.set(f"{model}  ·  {input_label}  ·  Chunk {chunk}  ·  {glossary}  ·  {segments}")
+        self._meta_var.set("Saved on this Mac · Optional summaries via OpenRouter")
 
     def _set_path(self) -> None:
         target = self._selected_history_path if self._selected_history_path else self._session_path
+        self._title_var.set(self._recording_title(target) if target else "Ready for a conversation")
         if target:
             try:
                 rel = target.relative_to(DISPLAY_ROOT)
@@ -1760,6 +1659,9 @@ class App(ctk.CTk):
             self._path_var.set("  recordings/")
 
     def clear_transcript(self) -> None:
+        if self.is_recording or self._finishing:
+            return
+        self._view_btn.set("Transcript")
         self._show_placeholder()
         self.transcript_lines = []
         self._chunk_count = 0

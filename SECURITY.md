@@ -4,7 +4,9 @@ Source is a local-first macOS desktop app. It records audio, writes local files,
 
 ## Security Model
 
-- No cloud transcription or app-owned network service is used during recording/transcription.
+- Recording and transcription use no cloud processing or app-owned network service.
+- The optional interpretation action sends only the previewed transcript text to OpenRouter after a user click. Free models may have provider logging or training policies; Source does not promise zero data retention.
+- The OpenRouter key is held in process memory for the current run or read from `OPENROUTER_API_KEY`. It is never written to `settings.json`, transcript files, or debug logs.
 - First model use may download model files through upstream model tooling.
 - Source runs write to the project-local data folder.
 - Packaged app runs write to `~/Library/Application Support/Source/`.
@@ -14,6 +16,8 @@ Source is a local-first macOS desktop app. It records audio, writes local files,
 ## Sensitive Data
 
 Recordings and transcripts may contain private conversations. They are intentionally excluded from Git by `.gitignore`.
+
+Interpretation results are saved in the ignored `recordings/interpretations/` directory. The original transcript is not modified. Do not use the cloud interpretation action for material you cannot share with OpenRouter and its selected provider.
 
 Before sharing logs, review `debug.log`; it can include local paths, device names, and error details.
 

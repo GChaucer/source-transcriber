@@ -33,6 +33,7 @@ class AudioRecorder:
         self._source_frames_received: dict[str, int] = {}
         self._max_level = 0.0
         self._source_max_level: dict[str, float] = {}
+        self._source_level: dict[str, float] = {}
         self._last_status = ""
         self._selected_input_device = None
         self._selected_input_devices: dict[str, dict] = {}
@@ -53,6 +54,7 @@ class AudioRecorder:
         self._source_frames_received = {}
         self._max_level = 0.0
         self._source_max_level = {}
+        self._source_level = {}
         self._last_status = ""
         self._selected_input_device = None
         self._selected_input_devices = {}
@@ -75,6 +77,7 @@ class AudioRecorder:
             "frames_received": self._frames_received,
             "source_frames_received": dict(self._source_frames_received),
             "max_level": round(self._max_level, 6),
+            "source_level": dict(self._source_level),
             "source_max_level": {
                 source: round(level, 6) for source, level in self._source_max_level.items()
             },
@@ -185,6 +188,7 @@ class AudioRecorder:
         self._source_frames_received[source] = self._source_frames_received.get(source, 0) + frames
         if indata.size:
             level = float(np.max(np.abs(indata)))
+            self._source_level[source] = level
             self._max_level = max(self._max_level, level)
             self._source_max_level[source] = max(self._source_max_level.get(source, 0.0), level)
         event = self._source_first_callbacks.get(source)
