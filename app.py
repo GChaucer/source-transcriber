@@ -917,7 +917,6 @@ class App(ctk.CTk):
         ctk.CTkLabel(header, text="Source", font=F(22, "bold"), text_color=T_PRI).pack(side="left")
         ctk.CTkLabel(header, text="Local transcription", font=F(12), text_color=T_SEC).pack(side="left", padx=14)
         self._button(header, "Settings", self.open_settings, width=82).pack(side="right", padx=(8, 0))
-        self._button(header, "OpenRouter", self.open_settings, width=108).pack(side="right", padx=8)
         self.pill = StatusPill(header)
 
     def _build_footer(self) -> None:
@@ -1050,7 +1049,7 @@ class App(ctk.CTk):
                 result = find_interpretation(source, RECORDINGS_DIR)
                 self._meta_var.set("AI-generated summary · Check against the original transcript" if result else "Optional summary · Free OpenRouter model")
                 self._set_editor_content(result.read_text(encoding="utf-8").split("\n\n", 2)[-1] if result else
-                    "Turn this conversation into a brief.\n\nOpenRouter creates a summary, key points, decisions and open questions. Your original transcript stays unchanged.\n\nAdd your API key in OpenRouter settings, then choose Summarize below.", None if result else "ph")
+                    "Turn this conversation into a brief.\n\nOpenRouter creates a summary, key points, decisions and open questions. Your original transcript stays unchanged.\n\nAdd your OpenRouter API key in Settings, then choose Summarize below.", None if result else "ph")
         except (OSError, UnicodeError, InterpretationError) as exc:
             self._set_editor_content(f"Unable to display recording: {exc}", "ph")
 
