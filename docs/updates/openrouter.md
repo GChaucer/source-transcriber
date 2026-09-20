@@ -23,7 +23,7 @@ Open **Settings**, paste an OpenRouter key, and choose **Use key this session**.
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph Local[On your Mac]
         Mic[Microphone] --> Capture[AudioRecorder]
         System[System audio through BlackHole] --> Capture
