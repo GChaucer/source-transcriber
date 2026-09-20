@@ -4,9 +4,15 @@
 
 This project is the desktop app, recording workflow, and file-management wrapper. It does not invent or ship a new speech model. Transcription is powered by `faster-whisper`, which runs OpenAI Whisper model weights through CTranslate2.
 
-## Screenshot
+## New: optional OpenRouter summaries
 
-![Source mid-recording with a live transcript](docs/screenshots/main-window.png)
+A simpler workspace now keeps original transcripts and optional free-model summaries together. OpenRouter setup lives in **Settings**; recording still works without an API key.
+
+![Updated Source transcript view using synthetic content](docs/screenshots/source-transcript.jpg)
+
+[See the visual update, setup screenshots, and architecture diagram](docs/updates/openrouter.md).
+
+This feature is currently on the PR branch, not yet a published release.
 
 ## What It Does
 
@@ -14,7 +20,7 @@ This project is the desktop app, recording workflow, and file-management wrapper
 - Transcribes rolling chunks with a local Whisper model through `faster-whisper`.
 - Autosaves Markdown and text transcripts while recording.
 - Writes local audio sidecars for each session: mic/system source WAVs when applicable, a mixed WAV used for transcription, and session metadata JSON.
-- Shows a lightweight local transcript history with Open, Reveal, and Rename actions.
+- Shows readable recording history with Transcript / Summary tabs, Copy text, Rename, and Show in Finder.
 - Optionally interprets a completed transcript through a free OpenRouter model.
 - Records and transcribes locally after model files are downloaded.
 

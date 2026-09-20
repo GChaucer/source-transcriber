@@ -29,6 +29,7 @@ from interpret import (
     save_interpretation,
     transcript_body,
     find_interpretation,
+    validate_transcript_size,
 )
 from transcriber import COMPUTE_TYPE, LANGUAGE, MODEL_OPTIONS, Transcriber
 
@@ -265,10 +266,8 @@ class StatusPill:
             width=136,
         )
         self._frame.pack(side="right", padx=(0, 12))
-        self._frame.pack_propagate(False)
-
         row = ctk.CTkFrame(self._frame, fg_color="transparent")
-        row.place(relx=0.5, rely=0.5, anchor="center")
+        row.pack(padx=14, pady=2)
 
         self._dot = ctk.CTkLabel(row, text="●", font=F(7), text_color=T_TER, width=8)
         self._dot.pack(side="left")
@@ -1070,6 +1069,7 @@ class App(ctk.CTk):
         try:
             source_content = source_path.read_text(encoding="utf-8")
             body = transcript_body(source_content)
+            validate_transcript_size(body)
         except (OSError, UnicodeError, InterpretationError) as exc:
             messagebox.showerror("Source", f"Unable to open the transcript.\n\n{exc}")
             return

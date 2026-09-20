@@ -2,6 +2,8 @@
 
 Source is intentionally small. The v0.1 architecture keeps capture, transcription, and file management in separate modules without introducing a database or cloud service.
 
+[View the OpenRouter architecture diagram and interface walkthrough](docs/updates/openrouter.md#how-it-works).
+
 ## Runtime Flow
 
 ```text

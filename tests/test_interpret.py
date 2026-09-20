@@ -84,5 +84,15 @@ class RoutingAndHistoryTests(unittest.TestCase):
             self.assertIsNone(find_interpretation(source.replace('Test meeting.', 'Different meeting.'), root))
 
 
+class LocalTranscriptTests(unittest.TestCase):
+    def test_long_transcript_reads_locally_but_cannot_be_sent(self):
+        body = "x" * 100001
+        self.assertEqual(transcript_body("# Transcript\n" + body), body)
+        with patch("interpret.urllib.request.urlopen") as send:
+            with self.assertRaisesRegex(InterpretationError, "summary limit"):
+                request_interpretation(body, "openrouter/free", "test-key")
+            send.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

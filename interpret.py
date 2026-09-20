@@ -43,15 +43,19 @@ def transcript_body(markdown: str) -> str:
     body = markdown.split(marker, 1)[1].strip()
     if not body:
         raise InterpretationError("The selected transcript is empty.")
-    if len(body) > MAX_TRANSCRIPT_CHARS:
-        raise InterpretationError(
-            f"This transcript is over the {MAX_TRANSCRIPT_CHARS:,}-character limit. "
-            "Choose a shorter transcript; Source will not silently truncate it."
-        )
     return body
 
 
+def validate_transcript_size(body: str) -> None:
+    if len(body) > MAX_TRANSCRIPT_CHARS:
+        raise InterpretationError(
+            f"This transcript is over the {MAX_TRANSCRIPT_CHARS:,}-character summary limit. "
+            "Choose a shorter transcript; Source will not silently truncate it."
+        )
+
+
 def request_interpretation(transcript: str, model: str, api_key: str) -> Interpretation:
+    validate_transcript_size(transcript)
     model = model.strip()
     api_key = api_key.strip()
     if "\n" in api_key or "\r" in api_key:
