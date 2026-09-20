@@ -44,9 +44,11 @@ This app records audio. Make sure you have permission to record the conversation
 
 By default, audio and transcripts stay on your machine. The first use of a Whisper model may require internet access to download model files. After that download, transcription can run locally.
 
-The optional **Interpret transcript** action sends the selected transcript text to OpenRouter and a model provider only after you review the preview and click **Send transcript to OpenRouter**. Audio files, device metadata, and local paths are not sent. Free providers may retain or use submitted text for training; use sample text rather than a private interview or meeting unless sharing it is appropriate. The OpenRouter API key is accepted in the dialog or through `OPENROUTER_API_KEY` and remains in process memory, not `settings.json`. Source accepts only `openrouter/free` or model IDs ending in `:free`; availability and free rate limits can change. No paid model fallback is used. Results are saved under `recordings/interpretations/`, leaving the original transcript untouched and out of transcript history.
+The optional **Summarize with OpenRouter** action sends only the selected transcript body after you review a preview and choose **Send transcript to OpenRouter**. Audio files and local metadata stay on your Mac. Free providers may retain or train on submitted text, so use a sample for a demo or private conversation. Source uses only `openrouter/free`, with no custom router or paid-model fallback. Availability and free rate limits can change.
 
-To try it from source, create an API key at [OpenRouter](https://openrouter.ai/keys), select a completed transcript, and click **Interpret transcript**. The default `openrouter/free` chooses an available free model. To compare two named free models, enter their `:free` model IDs one at a time; each run creates a separate file. The prebuilt release may predate this feature until a new release is published.
+Click **OpenRouter** in the main toolbar to add a key, then **Use key this session**. A key is optional for local recording and stays in memory until you quit; it is never saved in `settings.json`. You can also supply `OPENROUTER_API_KEY`. Select a recording and choose **Summarize with OpenRouter**. Its saved result appears in the **Summary** tab and remains associated by transcript content if you rename the recording. The **Transcript** tab always shows the original text. Results are saved separately under `recordings/interpretations/`.
+
+The sidebar lists recordings by readable title and date. Select one to open it. **Settings** contains local model size and update interval; audio input remains beside the recording button. During capture, the status shows elapsed time and whether each selected input has a signal. **Copy text** copies the current tab, and **Show in Finder** reveals the original recording file.
 
 See `SECURITY.md` for the current security posture, dependency-audit commands, and local data handling notes.
 
@@ -161,7 +163,7 @@ Current transcription defaults:
 - Language: `en`
 - Default chunk length: `8s`
 
-Source skips chunks below -60 dBFS before running Whisper. This avoids spending CPU time on near-silence and reduces repeated filler hallucinations. It does not remove real speech from the saved audio sidecars.
+Source skips chunks only when every 20 ms audio frame is below -60 dBFS before running Whisper. Short utterances are not averaged together with surrounding silence. Very faint speech can still fall below this threshold; the original WAV audio is retained. This avoids spending CPU time on near-silence and reduces repeated filler hallucinations. It does not remove real speech from the saved audio sidecars.
 
 Model tradeoffs:
 

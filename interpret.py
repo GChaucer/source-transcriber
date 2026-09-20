@@ -54,12 +54,14 @@ def transcript_body(markdown: str) -> str:
 def request_interpretation(transcript: str, model: str, api_key: str) -> Interpretation:
     model = model.strip()
     api_key = api_key.strip()
+    if "\n" in api_key or "\r" in api_key:
+        raise InterpretationError("The API key contains an unexpected line break.")
     if not model or not api_key:
         raise InterpretationError("Enter an OpenRouter model ID and API key.")
     if not re.fullmatch(r"[A-Za-z0-9._:/-]+", model):
         raise InterpretationError("Enter a valid OpenRouter model ID.")
-    if model != "openrouter/free" and not model.endswith(":free"):
-        raise InterpretationError("Use openrouter/free or a model ID ending in :free.")
+    if model != DEFAULT_MODEL:
+        raise InterpretationError("Source uses openrouter/free only; paid and custom routes are disabled.")
 
     payload = {
         "model": model,
@@ -131,6 +133,7 @@ def save_interpretation(
         "# Transcript interpretation\n\n"
         f"Source: `{source_path.name}`  \n"
         f"Source SHA-256: `{source_hash}`  \n"
+        f"Transcript SHA-256: `{hashlib.sha256(transcript_body(source_text).encode()).hexdigest()}`  \n"
         f"Model: `{result.model}`  \n"
         f"Tokens: {result.prompt_tokens if result.prompt_tokens is not None else 'unknown'} input, "
         f"{result.completion_tokens if result.completion_tokens is not None else 'unknown'} output\n\n"
@@ -146,3 +149,22 @@ def save_interpretation(
         except FileExistsError:
             continue
     raise InterpretationError("Could not choose a unique interpretation filename.")
+
+
+def find_interpretation(source_text: str, recordings_dir: Path) -> Path | None:
+    """Match saved results by transcript content, including after a file rename."""
+    body_hash = hashlib.sha256(transcript_body(source_text).encode()).hexdigest()
+    source_hash = hashlib.sha256(source_text.encode()).hexdigest()
+    folder = recordings_dir / "interpretations"
+    matches = []
+    for path in folder.glob("*.md"):
+        if path.is_symlink():
+            continue
+        try:
+            header = path.read_text(encoding="utf-8").split("\n\n", 2)[1]
+            if (f"Transcript SHA-256: `{body_hash}`" in header
+                    or f"Source SHA-256: `{source_hash}`" in header):
+                matches.append(path)
+        except (OSError, UnicodeError, IndexError):
+            continue
+    return max(matches, key=lambda path: path.stat().st_mtime_ns, default=None)

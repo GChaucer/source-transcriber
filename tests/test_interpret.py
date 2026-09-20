@@ -65,6 +65,24 @@ class InterpretationTests(unittest.TestCase):
         with self.assertRaises(InterpretationError):
             transcript_body("# Transcript\n\n")
 
+class RoutingAndHistoryTests(unittest.TestCase):
+    def test_router_suffix_cannot_bypass_free_only_policy(self):
+        for model in ("openrouter/auto:free", "openrouter/auto", "example/custom:free"):
+            with self.subTest(model=model), patch("interpret.urllib.request.urlopen") as send:
+                with self.assertRaises(InterpretationError):
+                    request_interpretation("sample", model, "test-key")
+                send.assert_not_called()
+
+    def test_summary_remains_associated_after_recording_rename(self):
+        from interpret import find_interpretation
+        source = '---\ntitle: Old\n---\n\n# Transcript\n\n[12:00:00] Test meeting.'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = save_interpretation(root/'old.md', source, Interpretation('Summary', 'free', 1, 1), root)
+            renamed = source.replace('title: Old', 'title: New')
+            self.assertEqual(find_interpretation(renamed, root), result)
+            self.assertIsNone(find_interpretation(source.replace('Test meeting.', 'Different meeting.'), root))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,8 +28,9 @@ CustomTkinter UI
 - `app.py` owns the UI, session lifecycle, path policy, transcript history, and user-facing errors.
 - `recorder.py` owns local audio capture through `sounddevice`, startup diagnostics, source WAV files, and mixed chunks.
 - `transcriber.py` owns the `faster-whisper` model wrapper and release-safe model choices.
-- `transcriber.py` skips near-silent chunks before inference; the recorded WAV sidecars remain unchanged.
-- `interpret.py` owns the optional OpenRouter request and separate result files. It does not participate in audio capture or transcription.
+- `transcriber.py` skips audio only if every 20 ms frame is below the silence threshold; short speech is not diluted by silence across a full chunk. WAV sidecars remain unchanged.
+- `interpret.py` owns the optional `openrouter/free` request and separate result files. No custom model or paid fallback is accepted. Transcript-body hashes associate results with recordings after renames; the UI exposes them through a Summary tab. It does not participate in audio capture or transcription.
+- Settings holds optional in-memory OpenRouter credentials and local model/update controls. The main window keeps input selection, elapsed time and per-source signal status visible.
 - `system_audio.py` is an architecture note for a possible future native ScreenCaptureKit implementation. It is not active runtime code.
 
 ## Data Locations
