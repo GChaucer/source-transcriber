@@ -57,4 +57,4 @@ Only `openrouter/free` is accepted. Custom routers and paid fallback are disable
 
 Ten regression tests pass, and a synthetic UI smoke covers setup, sending, saved results, transcript preservation and the finishing-state guard. The macOS app has been built and visually checked. Live OpenRouter inference and live-call capture are still unverified; screenshots must not be treated as evidence of either.
 
-This update is on PR #1's feature branch. It has not been merged into the default branch or published as a release.
+This update ships in [Source v0.3](https://github.com/GChaucer/source-transcriber/releases/tag/v0.3). See [PR #1](https://github.com/GChaucer/source-transcriber/pull/1) for the implementation and independent agent review.

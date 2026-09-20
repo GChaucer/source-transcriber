@@ -12,7 +12,7 @@ A simpler workspace now keeps original transcripts and optional free-model summa
 
 [See the visual update, setup screenshots, and architecture diagram](docs/updates/openrouter.md).
 
-This feature is currently on the PR branch, not yet a published release.
+See [Source v0.3](https://github.com/GChaucer/source-transcriber/releases/tag/v0.3) for the macOS download and release notes.
 
 ## What It Does
 
